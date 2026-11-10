@@ -170,13 +170,14 @@ class CodeGenerator:
         for sym in self.info.symbols:
             cpp_lines.append(f"static FARPROC g_pfn_{sym.safe_name} = NULL;")
 
+        target_escaped_w = self.target_dll.replace("\\", "\\\\")
         cpp_lines.extend([
             "",
             "// Real library loader and symbol resolver",
             "static BOOL LoadRealLibrary() {",
             "    if (g_hRealDll != NULL) return TRUE;",
             "",
-            f'    const wchar_t* targetPath = L"{self.target_dll}";',
+            f'    const wchar_t* targetPath = L"{target_escaped_w}";',
             "    g_hRealDll = LoadLibraryW(targetPath);",
             "    if (!g_hRealDll) {",
             "        // Fallback: try loading from Windows System Directory directly",
