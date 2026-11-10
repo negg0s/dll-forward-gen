@@ -78,6 +78,24 @@ class ExportSymbol:
         return f"[@{self.ordinal}] {name_str}{demang_str} (RVA 0x{self.rva:08X}){fwd_str}"
 
 
+@dataclass(frozen=True)
+class ImportSymbol:
+    """Represents a symbol imported by a PE binary."""
+    name: Optional[str] = None
+    ordinal: Optional[int] = None
+
+    @property
+    def is_by_ordinal(self) -> bool:
+        return self.name is None
+
+
+@dataclass
+class ImportDescriptor:
+    """Represents a DLL dependency and its imported symbols."""
+    dll_name: str
+    symbols: List[ImportSymbol] = field(default_factory=list)
+
+
 @dataclass
 class PeExportInfo:
     """Complete summary of a PE binary's export directory."""

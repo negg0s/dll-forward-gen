@@ -49,6 +49,17 @@ class TestCli(unittest.TestCase):
         self.assertIn("@1", output)
         self.assertNotIn("@2", output)
 
+    def test_cli_check_target(self):
+        # cmd.exe imports ntdll.dll
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["ntdll.dll", "--check-target", r"C:\Windows\System32\cmd.exe", "--dump-only", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("TARGET IMPORT AUDIT", output)
+        self.assertIn("COVERED", output)
+
     def test_cli_generate_suffix_project(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             out_dir = Path(tmp_dir) / "version_mod_proxy"

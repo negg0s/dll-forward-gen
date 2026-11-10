@@ -65,3 +65,33 @@
   - [x] Step 2: Verify binary with `dll-forward-gen` parser.
   - [x] Step 3: Update `README.md` with MASM mode, security mitigations, and modding guide.
   - [x] Step 4: Final cleanup of disk C: and final git commit.
+
+### Phase 3: Elite Reversing & Systems Tooling
+- [ ] Task 11: PE Import Directory Parser & Executable Compatibility Checker (`--check-target <exe>`)
+  - [ ] Step 1: Write unit tests in `tests/test_import_parser.py` parsing import tables of system binaries (e.g. `notepad.exe` or `cmd.exe`).
+  - [ ] Step 2: Implement `parse_imports()` in `src/dll_forward_gen/pe_parser.py` (both 32-bit and 64-bit INT/IAT).
+  - [ ] Step 3: Add `--check-target` flag to CLI to cross-reference target executable imports with DLL exports.
+  - [ ] Step 4: Run tests and commit.
+
+- [ ] Task 12: Export Table Diff Engine (`dll-forward-gen diff <dll1> <dll2>`)
+  - [ ] Step 1: Write unit tests in `tests/test_diff.py` for added, removed, ordinal-shifted, and modified exports.
+  - [ ] Step 2: Implement `diff_exports()` in `src/dll_forward_gen/diff.py`.
+  - [ ] Step 3: Add `diff` subcommand to CLI with visual colored diff table.
+  - [ ] Step 4: Run tests and commit.
+
+- [ ] Task 13: Selective Function Hooking Generator (`--hook <name>`)
+  - [ ] Step 1: Write unit tests in `tests/test_hooking.py` verifying selective detour emission for specified symbols while forwarding remaining symbols.
+  - [ ] Step 2: Implement selective detour stubs in `generator.py`.
+  - [ ] Step 3: Verify MSVC compilation of generated hook proxy.
+  - [ ] Step 4: Commit task 13.
+
+- [ ] Task 14: Native C++20 Header-Only Parser & Standalone CLI
+  - [ ] Step 1: Write `cpp/dll_forward_gen.hpp` with zero-dependency C++20 PE parser and generator.
+  - [ ] Step 2: Write `cpp/main.cpp` standalone CLI.
+  - [ ] Step 3: Test compilation with `cl.exe /std:c++20`.
+  - [ ] Step 4: Commit task 14.
+
+- [ ] Task 15: GitHub Actions CI Workflow, Documentation, & Final Disk C Cleanup
+  - [ ] Step 1: Add `.github/workflows/ci.yml` running unit tests and MSVC builds on Windows runner.
+  - [ ] Step 2: Update `README.md` with diffing, hook generation, and target verification examples.
+  - [ ] Step 3: Run full test suite, purge temp files, and commit.

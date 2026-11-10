@@ -130,6 +130,72 @@ def format_table(
     return "\n".join(lines)
 
 
+def audit_target_imports(info: PeExportInfo, target_exe: Path, use_color: bool = True) -> str:
+    """Check if target executable's imported functions are satisfied by this DLL."""
+    c_rst = COLOR_RESET if use_color else ""
+    c_bld = COLOR_BOLD if use_color else ""
+    c_cyn = COLOR_CYAN if use_color else ""
+    c_grn = COLOR_GREEN if use_color else ""
+    c_ylw = COLOR_YELLOW if use_color else ""
+    c_red = COLOR_RED if use_color else ""
+    c_dim = COLOR_DIM if use_color else ""
+
+    target_parser = PeParser.from_file(target_exe)
+    all_imports = target_parser.parse_imports()
+
+    # Match target import descriptor by stem or name
+    dll_stem = Path(info.dll_name).stem.lower()
+    matching_desc = None
+    for desc in all_imports:
+        desc_stem = Path(desc.dll_name).stem.lower()
+        if desc_stem == dll_stem or desc.dll_name.lower() == info.dll_name.lower():
+            matching_desc = desc
+            break
+
+    lines = [
+        "",
+        f"{c_cyn}{'=' * 82}{c_rst}",
+        f" {c_bld}TARGET IMPORT AUDIT: {target_exe.name} -> {info.dll_name}{c_rst}",
+        f"{c_cyn}{'=' * 82}{c_rst}",
+    ]
+
+    if not matching_desc:
+        lines.append(f"  {c_ylw}Notice: Target '{target_exe.name}' does not directly import '{info.dll_name}'.{c_rst}")
+        lines.append(f"{c_cyn}{'=' * 82}{c_rst}")
+        return "\n".join(lines)
+
+    exported_names = {s.name for s in info.symbols if s.name}
+    exported_ordinals = {s.ordinal for s in info.symbols}
+
+    covered_count = 0
+    missing_count = 0
+
+    lines.append(f" {c_bld}Imported Symbols:{c_rst} {len(matching_desc.symbols)}")
+    lines.append(f"{c_cyn}{'-' * 82}{c_rst}")
+
+    for sym in matching_desc.symbols:
+        if sym.is_by_ordinal:
+            is_covered = sym.ordinal in exported_ordinals
+            sym_name = f"<Ordinal_{sym.ordinal}>"
+        else:
+            is_covered = sym.name in exported_names
+            sym_name = sym.name or ""
+
+        if is_covered:
+            covered_count += 1
+            status_str = f"{c_grn}[COVERED]{c_rst}"
+        else:
+            missing_count += 1
+            status_str = f"{c_red}[MISSING]{c_rst}"
+
+        lines.append(f"  {status_str} {sym_name}")
+
+    lines.append(f"{c_cyn}{'-' * 82}{c_rst}")
+    lines.append(f" Result: {c_grn}{covered_count} covered{c_rst}, {c_red if missing_count > 0 else c_grn}{missing_count} missing{c_rst}")
+    lines.append(f"{c_cyn}{'=' * 82}{c_rst}")
+    return "\n".join(lines)
+
+
 def export_info_to_dict(info: PeExportInfo) -> dict:
     """Serialize PeExportInfo to a JSON-serializable dictionary."""
     return {
@@ -215,6 +281,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Enable runtime file logging (proxy_log.txt) in generated proxy code",
     )
     parser.add_argument(
+        "--check-target",
+        type=Path,
+        default=None,
+        help="Check if an executable's imports are satisfied by this DLL",
+    )
+    parser.add_argument(
         "--dump-only",
         action="store_true",
         help="Print export directory details and exit without generating files",
@@ -262,6 +334,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         data = export_info_to_dict(info)
         print(json.dumps(data, indent=2))
         return 0
+
+    if args.check_target:
+        print(audit_target_imports(info, args.check_target, use_color=use_color))
+        if args.dump_only:
+            return 0
 
     if args.dump_only or args.filter or args.ordinal is not None:
         table_output = format_table(
