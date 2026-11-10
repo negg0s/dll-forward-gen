@@ -393,10 +393,12 @@ class CodeGenerator:
 
         if self.enable_file_log:
             cpp_lines.extend([
-                '        FILE* f = NULL;',
-                '        if (fopen_s(&f, "proxy_log.txt", "a") == 0 && f) {',
-                f'            fprintf(f, "[MASM PROXY] Attached: {self.info.dll_name}\\n");',
-                '            fclose(f);',
+                '        {',
+                '            FILE* f = NULL;',
+                '            if (fopen_s(&f, "proxy_log.txt", "a") == 0 && f) {',
+                f'                fprintf(f, "[MASM PROXY] Attached: {self.info.dll_name}\\n");',
+                '                fclose(f);',
+                '            }',
                 '        }',
             ])
 

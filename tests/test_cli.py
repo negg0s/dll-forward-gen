@@ -20,22 +20,66 @@ class TestCli(unittest.TestCase):
     def test_cli_dump_only(self):
         f = io.StringIO()
         with redirect_stdout(f):
-            exit_code = main(["version.dll", "--dump-only"])
+            exit_code = main(["version.dll", "--dump-only", "--no-color"])
 
         self.assertEqual(exit_code, 0)
         output = f.getvalue()
         self.assertIn("VERSION.dll", output)
         self.assertIn("GetFileVersionInfoW", output)
+        self.assertIn("SHA-256", output)
+        self.assertIn("Mitigations", output)
 
-    def test_cli_generate_pragma_project(self):
+    def test_cli_filter_by_name(self):
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "--filter", "QueryValue", "--dump-only", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("VerQueryValueW", output)
+        self.assertNotIn("GetFileVersionInfoA", output)
+
+    def test_cli_filter_by_ordinal(self):
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "--ordinal", "1", "--dump-only", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("@1", output)
+        self.assertNotIn("@2", output)
+
+    def test_cli_generate_suffix_project(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            out_dir = Path(tmp_dir) / "version_proxy"
-            exit_code = main(["version.dll", "-o", str(out_dir), "-m", "pragma"])
+            out_dir = Path(tmp_dir) / "version_mod_proxy"
+            exit_code = main([
+                "version.dll",
+                "-o", str(out_dir),
+                "-m", "pragma",
+                "--suffix", "_orig",
+                "--file-log",
+                "--no-color",
+            ])
 
             self.assertEqual(exit_code, 0)
+            cpp_content = (out_dir / "dllmain.cpp").read_text(encoding="utf-8")
+            self.assertIn("VERSION_orig", cpp_content)
+            self.assertIn("proxy_log.txt", cpp_content)
+
+    def test_cli_generate_masm_project(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_dir = Path(tmp_dir) / "version_masm_proxy"
+            exit_code = main([
+                "version.dll",
+                "-o", str(out_dir),
+                "-m", "masm",
+                "--no-color",
+            ])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((out_dir / "stubs.asm").exists())
             self.assertTrue((out_dir / "dllmain.cpp").exists())
-            self.assertTrue((out_dir / "CMakeLists.txt").exists())
-            self.assertTrue((out_dir / "build.bat").exists())
+            self.assertTrue((out_dir / "exports.def").exists())
 
     def test_cli_json_output(self):
         f = io.StringIO()
@@ -46,6 +90,8 @@ class TestCli(unittest.TestCase):
         output = f.getvalue()
         self.assertIn('"dll_name":', output)
         self.assertIn('"symbols":', output)
+        self.assertIn('"sha256":', output)
+        self.assertIn('"mitigations":', output)
 
 
 if __name__ == "__main__":

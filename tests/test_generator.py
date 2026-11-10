@@ -36,9 +36,23 @@ class TestGenerator(unittest.TestCase):
         self.assertIn("#pragma comment(linker", rendered)
         self.assertIn("FunctionAlpha=C:\\\\Windows\\\\System32\\\\target.FunctionAlpha,@1", rendered)
         self.assertIn("FunctionBeta=C:\\\\Windows\\\\System32\\\\target.FunctionBeta,@2", rendered)
-        # Ordinal-only export check
         self.assertIn("Ordinal_3=C:\\\\Windows\\\\System32\\\\target.#3,@3,NONAME", rendered)
         self.assertIn("DllMain", rendered)
+
+    def test_suffix_modding_forwarding(self):
+        # Local app modding: target forwards to target_orig.dll in same directory
+        gen = CodeGenerator(self.info, mode=GeneratorMode.PRAGMA, target_dll="target_orig.dll")
+        rendered = gen.generate_pragma_source()
+
+        self.assertIn("FunctionAlpha=target_orig.FunctionAlpha,@1", rendered)
+        self.assertNotIn("C:\\\\Windows\\\\System32", rendered)
+
+    def test_file_logging_enabled(self):
+        gen = CodeGenerator(self.info, mode=GeneratorMode.PRAGMA, enable_file_log=True)
+        rendered = gen.generate_pragma_source()
+
+        self.assertIn('fopen_s(&fLog, "proxy_log.txt", "a")', rendered)
+        self.assertIn("[dll-forward-gen] Attached to process:", rendered)
 
     def test_def_generation(self):
         gen = CodeGenerator(self.info, mode=GeneratorMode.DEF, target_dll=r"C:\Windows\System32\target.dll")

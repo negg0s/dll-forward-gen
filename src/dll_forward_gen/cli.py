@@ -3,14 +3,35 @@
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 from . import __version__
 from .generator import CodeGenerator, GeneratorMode
-from .models import PeExportInfo
+from .models import ExportSymbol, PeExportInfo
 from .pe_parser import PeParser, PeParseError
+
+# ANSI color codes for Windows 10/11 Terminal
+COLOR_RESET = "\033[0m"
+COLOR_BOLD = "\033[1m"
+COLOR_CYAN = "\033[36m"
+COLOR_GREEN = "\033[32m"
+COLOR_YELLOW = "\033[33m"
+COLOR_MAGENTA = "\033[35m"
+COLOR_RED = "\033[31m"
+COLOR_DIM = "\033[90m"
+COLOR_WHITE = "\033[97m"
+
+
+def supports_color() -> bool:
+    """Check if standard output supports ANSI escape codes."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    if not hasattr(sys.stdout, "isatty"):
+        return False
+    return sys.stdout.isatty() or os.environ.get("TERM") == "xterm-256color"
 
 
 def resolve_dll_path(name_or_path: str) -> Path:
@@ -19,7 +40,6 @@ def resolve_dll_path(name_or_path: str) -> Path:
     if p.is_file():
         return p.resolve()
 
-    # If only a filename was given (e.g. "version.dll"), check common Windows directories
     search_dirs = [
         Path.cwd(),
         Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32",
@@ -30,7 +50,6 @@ def resolve_dll_path(name_or_path: str) -> Path:
         candidate = d / name_or_path
         if candidate.is_file():
             return candidate.resolve()
-        # Also try appending .dll if missing
         if not name_or_path.lower().endswith(".dll"):
             candidate_dll = d / f"{name_or_path}.dll"
             if candidate_dll.is_file():
@@ -39,38 +58,75 @@ def resolve_dll_path(name_or_path: str) -> Path:
     raise FileNotFoundError(f"Could not locate DLL '{name_or_path}' locally or in Windows system directories.")
 
 
-def format_table(info: PeExportInfo) -> str:
-    """Format export table into a clean ASCII view."""
+def format_table(
+    info: PeExportInfo,
+    filter_query: Optional[str] = None,
+    ordinal_filter: Optional[int] = None,
+    use_color: bool = True,
+) -> str:
+    """Format export table into a clean ASCII/ANSI view with filtering."""
+    c_rst = COLOR_RESET if use_color else ""
+    c_bld = COLOR_BOLD if use_color else ""
+    c_cyn = COLOR_CYAN if use_color else ""
+    c_grn = COLOR_GREEN if use_color else ""
+    c_ylw = COLOR_YELLOW if use_color else ""
+    c_mag = COLOR_MAGENTA if use_color else ""
+    c_dim = COLOR_DIM if use_color else ""
+    c_wht = COLOR_WHITE if use_color else ""
+
+    mitigations_str = "None"
+    if info.mitigations:
+        summary_list = info.mitigations.summary()
+        if summary_list:
+            mitigations_str = ", ".join(summary_list)
+
     lines = [
         "",
-        "=" * 78,
-        f" PE EXPORT DIRECTORY: {info.dll_name}",
-        "=" * 78,
-        f" File Path:       {info.filepath}",
-        f" Architecture:    {info.arch.value.upper()}",
-        f" Ordinal Base:    {info.ordinal_base}",
-        f" Total Exports:   {info.total_count} (Named: {len(info.named_exports)}, Ordinal-only: {len(info.ordinal_only_exports)}, Forwarded: {len(info.forwarded_exports)})",
-        "-" * 78,
-        f"{'ORDINAL':<9} {'RVA':<12} {'TYPE':<14} {'NAME / FORWARD TARGET'}",
-        "-" * 78,
+        f"{c_cyn}{'=' * 82}{c_rst}",
+        f" {c_bld}PE EXPORT DIRECTORY: {info.dll_name}{c_rst}",
+        f"{c_cyn}{'=' * 82}{c_rst}",
+        f" {c_bld}File Path:{c_rst}       {c_dim}{info.filepath}{c_rst}",
+        f" {c_bld}Architecture:{c_rst}    {c_wht}{info.arch.value.upper()}{c_rst}",
+        f" {c_bld}SHA-256:{c_rst}         {c_dim}{info.sha256[:32]}...{c_rst}",
+        f" {c_bld}Mitigations:{c_rst}     {c_mag}{mitigations_str}{c_rst}",
+        f" {c_bld}Ordinal Base:{c_rst}    {info.ordinal_base}",
+        f" {c_bld}Total Exports:{c_rst}   {info.total_count} (Named: {len(info.named_exports)}, Ordinal-only: {len(info.ordinal_only_exports)}, Forwarded: {len(info.forwarded_exports)})",
+        f"{c_cyn}{'-' * 82}{c_rst}",
+        f"{c_bld}{'ORDINAL':<9} {'RVA':<12} {'TYPE':<14} {'NAME / TARGET'}{c_rst}",
+        f"{c_cyn}{'-' * 82}{c_rst}",
     ]
 
-    for sym in info.symbols:
+    filtered_symbols = info.symbols
+    if ordinal_filter is not None:
+        filtered_symbols = [s for s in filtered_symbols if s.ordinal == ordinal_filter]
+    elif filter_query:
+        query_re = re.compile(filter_query, re.IGNORECASE)
+        filtered_symbols = [
+            s for s in filtered_symbols if (s.name and query_re.search(s.name)) or (s.forward_name and query_re.search(s.forward_name))
+        ]
+
+    for sym in filtered_symbols:
         ord_str = f"@{sym.ordinal}"
         rva_str = f"0x{sym.rva:08X}"
         if sym.is_forwarded:
-            type_str = "[FORWARDED]"
-            target_str = f"{sym.name or '<ordinal>'} -> {sym.forward_name}"
+            type_str = f"{c_grn}[FORWARDED]{c_rst}"
+            target_str = f"{sym.name or '<ordinal>'} {c_dim}->{c_rst} {c_grn}{sym.forward_name}{c_rst}"
         elif sym.is_ordinal_only:
-            type_str = "[ORDINAL-ONLY]"
-            target_str = f"<Ordinal_{sym.ordinal}>"
+            type_str = f"{c_ylw}[ORDINAL-ONLY]{c_rst}"
+            target_str = f"{c_ylw}<Ordinal_{sym.ordinal}>{c_rst}"
         else:
-            type_str = "[FUNCTION]"
-            target_str = sym.name or ""
+            type_str = f"{c_cyn}[FUNCTION]{c_rst}"
+            target_str = f"{c_wht}{sym.name}{c_rst}" if sym.name else ""
 
-        lines.append(f"{ord_str:<9} {rva_str:<12} {type_str:<14} {target_str}")
+        if sym.demangled_name:
+            target_str += f"\n          {c_dim}↳ {sym.demangled_name}{c_rst}"
 
-    lines.append("=" * 78)
+        lines.append(f"{ord_str:<9} {c_dim}{rva_str:<12}{c_rst} {type_str:<23} {target_str}")
+
+    if not filtered_symbols:
+        lines.append(f"  {c_ylw}(No exports matched filter criteria){c_rst}")
+
+    lines.append(f"{c_cyn}{'=' * 82}{c_rst}")
     return "\n".join(lines)
 
 
@@ -80,6 +136,8 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
         "filepath": info.filepath,
         "dll_name": info.dll_name,
         "arch": info.arch.value,
+        "sha256": info.sha256,
+        "mitigations": info.mitigations.summary() if info.mitigations else [],
         "timestamp": info.timestamp,
         "ordinal_base": info.ordinal_base,
         "total_exports": info.total_count,
@@ -91,6 +149,7 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
                 "ordinal": s.ordinal,
                 "rva": f"0x{s.rva:08X}",
                 "name": s.name,
+                "demangled_name": s.demangled_name,
                 "is_ordinal_only": s.is_ordinal_only,
                 "is_forwarded": s.is_forwarded,
                 "forward_name": s.forward_name,
@@ -103,7 +162,7 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="dll-forward-gen",
-        description="Fast, zero-dependency PE export forwarder & C++ proxy stub generator for Windows.",
+        description="Fast, zero-dependency PE export forwarder & C++/MASM proxy stub generator for Windows.",
     )
     parser.add_argument(
         "dll",
@@ -121,9 +180,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "-m",
         "--mode",
         type=str,
-        choices=["pragma", "def", "trampoline"],
+        choices=["pragma", "def", "trampoline", "masm"],
         default="pragma",
-        help="Forwarding strategy: 'pragma' (MSVC /export), 'def' (.def file), 'trampoline' (dynamic LoadLibrary wrapper)",
+        help="Forwarding strategy: 'pragma' (MSVC zero-overhead), 'masm' (pure assembly JMP stubs), 'trampoline' (C++ wrapper), 'def' (.def file)",
     )
     parser.add_argument(
         "-t",
@@ -131,6 +190,29 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=str,
         default=None,
         help="Explicit path to original DLL to forward to (default: C:\\Windows\\System32\\<dll_name>)",
+    )
+    parser.add_argument(
+        "--suffix",
+        type=str,
+        default=None,
+        help="Modding suffix mode: forward to <dll_name><suffix>.dll in the application folder (e.g. '_orig')",
+    )
+    parser.add_argument(
+        "--filter",
+        type=str,
+        default=None,
+        help="Filter exports by symbol name or forward target (substring or regex)",
+    )
+    parser.add_argument(
+        "--ordinal",
+        type=int,
+        default=None,
+        help="Inspect specific ordinal number only",
+    )
+    parser.add_argument(
+        "--file-log",
+        action="store_true",
+        help="Enable runtime file logging (proxy_log.txt) in generated proxy code",
     )
     parser.add_argument(
         "--dump-only",
@@ -148,6 +230,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Disable OutputDebugString logging in generated proxy code",
     )
     parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI color codes in terminal output",
+    )
+    parser.add_argument(
         "-v",
         "--version",
         action="version",
@@ -159,13 +246,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+    use_color = supports_color() and not args.no_color
 
     try:
         resolved_path = resolve_dll_path(args.dll)
         parser = PeParser.from_file(resolved_path)
         info = parser.parse()
     except (FileNotFoundError, PeParseError) as e:
-        print(f"[ERROR] {e}", file=sys.stderr)
+        c_red = COLOR_RED if use_color else ""
+        c_rst = COLOR_RESET if use_color else ""
+        print(f"{c_red}[ERROR] {e}{c_rst}", file=sys.stderr)
         return 1
 
     if args.json:
@@ -173,28 +263,43 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(data, indent=2))
         return 0
 
-    if args.dump_only:
-        print(format_table(info))
-        return 0
-
-    # Print summary banner
-    print(format_table(info))
+    if args.dump_only or args.filter or args.ordinal is not None:
+        table_output = format_table(
+            info,
+            filter_query=args.filter,
+            ordinal_filter=args.ordinal,
+            use_color=use_color,
+        )
+        print(table_output)
+        if args.dump_only:
+            return 0
 
     out_dir = args.output_dir
     if out_dir is None:
         out_dir = Path.cwd() / f"{Path(info.dll_name).stem}_proxy"
 
+    # Compute target DLL
+    target_dll = args.target_dll
+    if args.suffix:
+        stem = Path(info.dll_name).stem
+        target_dll = f"{stem}{args.suffix}.dll"
+
     mode = GeneratorMode(args.mode)
     gen = CodeGenerator(
         info=info,
         mode=mode,
-        target_dll=args.target_dll,
+        target_dll=target_dll,
         enable_logging=not args.no_logging,
+        enable_file_log=args.file_log,
     )
 
     created_files = gen.emit_project(out_dir)
 
-    print(f"\n[+] Generated {mode.value.upper()} proxy project in: {out_dir}")
+    c_grn = COLOR_GREEN if use_color else ""
+    c_bld = COLOR_BOLD if use_color else ""
+    c_rst = COLOR_RESET if use_color else ""
+
+    print(f"\n{c_grn}{c_bld}[+] Generated {mode.value.upper()} proxy project in: {out_dir}{c_rst}")
     for f in created_files:
         print(f"    - {f.name} ({f.stat().st_size} bytes)")
 
