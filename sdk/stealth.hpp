@@ -23,7 +23,6 @@
 
 namespace dll_forward_gen::stealth {
 
-#pragma pack(push, 1)
 typedef struct _PEB_LDR_DATA_EXT {
     ULONG Length;
     BOOLEAN Initialized;
@@ -50,7 +49,6 @@ typedef struct _LDR_DATA_TABLE_ENTRY_EXT {
     ULONG CheckSum;
     ULONG TimeDateStamp;
 } LDR_DATA_TABLE_ENTRY_EXT, *PLDR_DATA_TABLE_ENTRY_EXT;
-#pragma pack(pop)
 
 /// <summary>
 /// Retrieves the Process Environment Block (PEB) pointer directly from TEB.
@@ -77,7 +75,7 @@ inline bool UnlinkFromPEB(HMODULE hModule) noexcept {
     PLIST_ENTRY pHead = &pLdr->InLoadOrderModuleList;
     PLIST_ENTRY pCurrent = pHead->Flink;
 
-    void* targetBase = hModule ? static_cast<void*>(hModule) : pPeb->ImageBaseAddress;
+    void* targetBase = hModule ? static_cast<void*>(hModule) : static_cast<void*>(GetModuleHandleW(nullptr));
 
     while (pCurrent != pHead && pCurrent != nullptr) {
         auto* pEntry = CONTAINING_RECORD(pCurrent, LDR_DATA_TABLE_ENTRY_EXT, InLoadOrderLinks);

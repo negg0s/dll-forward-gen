@@ -195,7 +195,7 @@ public:
                 }
             }
 
-            pCurrentBlock = reinterpret_cast<const IMAGE_BASE_RELOCATION>(
+            pCurrentBlock = reinterpret_cast<const IMAGE_BASE_RELOCATION*>(
                 reinterpret_cast<const uint8_t*>(pCurrentBlock) + pCurrentBlock->SizeOfBlock
             );
         }

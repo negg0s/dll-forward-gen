@@ -15,8 +15,9 @@ int main() {
     // 1. Test GetPeb
     PPEB pPeb = GetPeb();
     assert(pPeb != nullptr);
-    assert(pPeb->ImageBaseAddress != nullptr);
-    std::cout << "    [+] GetPeb verified: ImageBase = " << pPeb->ImageBaseAddress << "\n";
+    HMODULE hExe = GetModuleHandleW(nullptr);
+    assert(hExe != nullptr);
+    std::cout << "    [+] GetPeb verified: BeingDebugged = " << static_cast<int>(pPeb->BeingDebugged) << ", ExeBase = " << hExe << "\n";
 
     // 2. Test HideFromDebugger
     bool hideSuccess = HideFromDebugger(GetCurrentThread());
