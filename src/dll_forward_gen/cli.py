@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -67,6 +68,7 @@ def format_table(
         f" {c_bld}Architecture:{c_rst}    {c_wht}{info.arch.value.upper()}{c_rst}",
         f" {c_bld}SHA-256:{c_rst}         {c_dim}{info.sha256[:32]}...{c_rst}",
         f" {c_bld}Mitigations:{c_rst}     {c_mag}{mitigations_str}{c_rst}",
+        f" {c_bld}TLS Callbacks:{c_rst}   {c_ylw}{len(info.tls_callbacks)}{c_rst}" + (f" ({', '.join(f'0x{cb:08X}' for cb in info.tls_callbacks)})" if info.tls_callbacks else ""),
         f" {c_bld}Ordinal Base:{c_rst}    {info.ordinal_base}",
         f" {c_bld}Total Exports:{c_rst}   {info.total_count} (Named: {len(info.named_exports)}, Ordinal-only: {len(info.ordinal_only_exports)}, Forwarded: {len(info.forwarded_exports)})",
         f"{c_cyn}{'-' * 82}{c_rst}",
@@ -148,7 +150,8 @@ def audit_target_imports(info: PeExportInfo, target_exe: Path, use_color: bool =
     covered_count = 0
     missing_count = 0
 
-    lines.append(f" {c_bld}Imported Symbols:{c_rst} {len(matching_desc.symbols)}")
+    load_type_str = f" {c_mag}(Delay-Loaded Dependency){c_rst}" if matching_desc.is_delay_loaded else ""
+    lines.append(f" {c_bld}Imported Symbols:{c_rst} {len(matching_desc.symbols)}{load_type_str}")
     lines.append(f"{c_cyn}{'-' * 82}{c_rst}")
 
     for sym in matching_desc.symbols:
@@ -220,6 +223,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Execute batch proxy generation from a JSON configuration file",
+    )
+    parser.add_argument(
+        "--export-sdk",
+        type=Path,
+        default=None,
+        help="Export all zero-dependency C++20 Modding & Hooking SDK headers into specified directory",
     )
     parser.add_argument(
         "-o",
@@ -339,8 +348,24 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"{c_red}[ERROR] Batch failed: {e}{c_rst}", file=sys.stderr)
             return 1
 
+    if args.export_sdk:
+        target_dir = args.export_sdk
+        target_dir.mkdir(parents=True, exist_ok=True)
+        sdk_pkg_dir = Path(__file__).parent / "sdk"
+        if not sdk_pkg_dir.is_dir():
+            sdk_pkg_dir = Path(__file__).resolve().parent.parent.parent / "sdk"
+        headers = list(sdk_pkg_dir.glob("*.hpp"))
+        for h in headers:
+            shutil.copy2(h, target_dir / h.name)
+        c_grn = COLOR_GREEN if use_color else ""
+        c_rst = COLOR_RESET if use_color else ""
+        print(f"\n{c_grn}[+] Successfully exported {len(headers)} C++20 SDK headers to: {target_dir}{c_rst}")
+        for h in headers:
+            print(f"    - {h.name}")
+        return 0
+
     if not args.dll:
-        print("[ERROR] Target DLL or --batch configuration required.", file=sys.stderr)
+        print("[ERROR] Target DLL, --batch configuration, or --export-sdk required.", file=sys.stderr)
         return 1
 
     try:

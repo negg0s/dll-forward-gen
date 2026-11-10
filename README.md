@@ -140,7 +140,12 @@ python -m dll_forward_gen --batch config.json
 
 ## 🧰 Native C++20 Modding SDK (`sdk/`)
 
-The repository includes zero-dependency header-only utilities ready to `#include` in your mods or hooks:
+The repository includes zero-dependency header-only utilities ready to `#include` in your mods or hooks.
+You can export all SDK headers into your own project at any time:
+
+```bash
+python -m dll_forward_gen --export-sdk ./my_project/sdk
+```
 
 ### Inline Hooking Engine (`sdk/inline_hook.hpp`)
 ```cpp
@@ -238,7 +243,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 38 unit tests execute in ~0.15 seconds with zero external dependencies.
+All 39 unit tests execute in ~0.16 seconds with zero external dependencies.
 
 ---
 

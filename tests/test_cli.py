@@ -128,5 +128,22 @@ class TestCli(unittest.TestCase):
         self.assertIn('"mitigations":', output)
 
 
+    def test_cli_export_sdk(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            f = io.StringIO()
+            with redirect_stdout(f):
+                exit_code = main(["--export-sdk", tmp_dir])
+
+            self.assertEqual(exit_code, 0)
+            exported_files = list(Path(tmp_dir).glob("*.hpp"))
+            self.assertGreaterEqual(len(exported_files), 5)
+            file_names = {p.name for p in exported_files}
+            self.assertIn("inline_hook.hpp", file_names)
+            self.assertIn("pattern_scan.hpp", file_names)
+            self.assertIn("iat_hook.hpp", file_names)
+            self.assertIn("eat_hook.hpp", file_names)
+            self.assertIn("veh_hook.hpp", file_names)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,3 +37,6 @@ dll-forward-gen = "dll_forward_gen.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dll_forward_gen = ["sdk/*.hpp"]

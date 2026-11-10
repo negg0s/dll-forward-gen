@@ -10,7 +10,7 @@ class TestImportParser(unittest.TestCase):
             self.skipTest("cmd.exe not found")
 
         parser = PeParser.from_file(cmd_exe)
-        imports = parser.parse_imports()
+        imports = parser.parse_imports(include_delay_load=True)
 
         self.assertGreater(len(imports), 0)
         imported_dll_names = [imp.dll_name.lower() for imp in imports]
@@ -23,6 +23,12 @@ class TestImportParser(unittest.TestCase):
 
         sym_names = [s.name for s in ntdll_import.symbols if s.name]
         self.assertTrue(any("NtClose" in name or "RtlVirtualUnwind" in name for name in sym_names))
+
+        # Check delay loaded imports detection
+        delay_loaded = [imp for imp in imports if imp.is_delay_loaded]
+        self.assertGreater(len(delay_loaded), 0)
+        delay_names = [imp.dll_name.lower() for imp in delay_loaded]
+        self.assertTrue(any("wldp" in name or "winbrand" in name or "winrt" in name for name in delay_names))
 
     def test_match_imports_against_dll(self):
         cmd_exe = r"C:\Windows\System32\cmd.exe"

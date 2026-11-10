@@ -102,6 +102,9 @@ class PeParser:
     def _read_u32(self, offset: int) -> int:
         return struct.unpack("<I", self._read_exact(offset, 4))[0]
 
+    def _read_u64(self, offset: int) -> int:
+        return struct.unpack("<Q", self._read_exact(offset, 8))[0]
+
     def _read_asciiz(self, offset: int, max_len: int = 1024) -> str:
         end = self.data.find(b"\x00", offset, offset + max_len)
         if end == -1:
@@ -154,11 +157,16 @@ class PeParser:
 
         self.opt_magic = self._read_u16(opt_hdr_offset)
         if self.opt_magic == self.OPTIONAL_HDR_MAGIC_PE32:
+            self.image_base = self._read_u32(opt_hdr_offset + 28)
             self.export_dir_offset = opt_hdr_offset + 96
         elif self.opt_magic == self.OPTIONAL_HDR_MAGIC_PE32_PLUS:
+            self.image_base = self._read_u64(opt_hdr_offset + 24)
             self.export_dir_offset = opt_hdr_offset + 112
         else:
             raise PeParseError(f"Unsupported Optional Header magic: 0x{self.opt_magic:04X}")
+
+        self.tls_dir_offset = self.export_dir_offset + (9 * 8)
+        self.delay_dir_offset = self.export_dir_offset + (13 * 8)
 
         if opt_hdr_offset + size_of_opt_hdr > len(self.data):
             raise PeParseError("Optional Header exceeds file size")
@@ -277,6 +285,32 @@ class PeParser:
                     )
                 )
 
+        # Extract TLS callbacks if present
+        tls_callbacks: List[int] = []
+        is_64 = self.opt_magic == self.OPTIONAL_HDR_MAGIC_PE32_PLUS
+        if hasattr(self, "tls_dir_offset") and self.tls_dir_offset + 8 <= len(self.data):
+            tls_rva = self._read_u32(self.tls_dir_offset)
+            tls_size = self._read_u32(self.tls_dir_offset + 4)
+            if tls_rva != 0 and tls_size != 0:
+                tls_offset = self.rva_to_offset(tls_rva)
+                if tls_offset is not None:
+                    cb_addr_offset = tls_offset + (24 if is_64 else 12)
+                    if cb_addr_offset + (8 if is_64 else 4) <= len(self.data):
+                        cb_va = self._read_u64(cb_addr_offset) if is_64 else self._read_u32(cb_addr_offset)
+                        if cb_va and cb_va >= self.image_base:
+                            cb_rva = cb_va - self.image_base
+                            cb_file_offset = self.rva_to_offset(cb_rva)
+                            if cb_file_offset is not None:
+                                ptr_size = 8 if is_64 else 4
+                                curr_cb = cb_file_offset
+                                while curr_cb + ptr_size <= len(self.data):
+                                    func_va = self._read_u64(curr_cb) if is_64 else self._read_u32(curr_cb)
+                                    if func_va == 0:
+                                        break
+                                    if func_va >= self.image_base:
+                                        tls_callbacks.append(func_va - self.image_base)
+                                    curr_cb += ptr_size
+
         return PeExportInfo(
             filepath=self.filepath,
             dll_name=dll_name,
@@ -286,9 +320,10 @@ class PeParser:
             symbols=symbols,
             sha256=self.sha256,
             mitigations=self.mitigations,
+            tls_callbacks=tls_callbacks,
         )
 
-    def parse_imports(self) -> List[ImportDescriptor]:
+    def parse_imports(self, include_delay_load: bool = True) -> List[ImportDescriptor]:
         """Parse PE import directory to extract all imported DLLs and their functions."""
         self._parse_headers()
 
@@ -298,58 +333,103 @@ class PeParser:
 
         import_rva = self._read_u32(import_dir_offset)
         import_size = self._read_u32(import_dir_offset + 4)
-        if import_rva == 0 or import_size == 0:
-            return []
 
-        import_offset = self.rva_to_offset(import_rva)
-        if import_offset is None:
-            return []
-
+        descriptors: List[ImportDescriptor] = []
         is_64 = self.opt_magic == self.OPTIONAL_HDR_MAGIC_PE32_PLUS
         thunk_size = 8 if is_64 else 4
         ordinal_mask = 0x8000000000000000 if is_64 else 0x80000000
 
-        descriptors: List[ImportDescriptor] = []
-        curr_offset = import_offset
+        if import_rva != 0 and import_size != 0:
+            import_offset = self.rva_to_offset(import_rva)
+            if import_offset is not None:
+                curr_offset = import_offset
+                while curr_offset + 20 <= len(self.data):
+                    raw_desc = self.data[curr_offset : curr_offset + 20]
+                    if raw_desc == b"\x00" * 20:
+                        break
 
-        while curr_offset + 20 <= len(self.data):
-            raw_desc = self.data[curr_offset : curr_offset + 20]
-            if raw_desc == b"\x00" * 20:
-                break
+                    orig_first_thunk, timestamp, fwd_chain, name_rva, first_thunk = struct.unpack("<IIIII", raw_desc)
+                    curr_offset += 20
 
-            orig_first_thunk, timestamp, fwd_chain, name_rva, first_thunk = struct.unpack("<IIIII", raw_desc)
-            curr_offset += 20
+                    dll_name_offset = self.rva_to_offset(name_rva)
+                    if dll_name_offset is None:
+                        continue
 
-            dll_name_offset = self.rva_to_offset(name_rva)
-            if dll_name_offset is None:
-                continue
+                    dll_name = self._read_asciiz(dll_name_offset)
+                    thunk_rva = orig_first_thunk if orig_first_thunk != 0 else first_thunk
+                    thunk_file_offset = self.rva_to_offset(thunk_rva)
+                    if thunk_file_offset is None:
+                        descriptors.append(ImportDescriptor(dll_name=dll_name, symbols=[], is_delay_loaded=False))
+                        continue
 
-            dll_name = self._read_asciiz(dll_name_offset)
-            thunk_rva = orig_first_thunk if orig_first_thunk != 0 else first_thunk
-            thunk_file_offset = self.rva_to_offset(thunk_rva)
-            if thunk_file_offset is None:
-                descriptors.append(ImportDescriptor(dll_name=dll_name, symbols=[]))
-                continue
+                    symbols: List[ImportSymbol] = []
+                    entry_offset = thunk_file_offset
 
-            symbols: List[ImportSymbol] = []
-            entry_offset = thunk_file_offset
+                    while entry_offset + thunk_size <= len(self.data):
+                        val = struct.unpack("<Q" if is_64 else "<I", self.data[entry_offset : entry_offset + thunk_size])[0]
+                        entry_offset += thunk_size
+                        if val == 0:
+                            break
 
-            while entry_offset + thunk_size <= len(self.data):
-                val = struct.unpack("<Q" if is_64 else "<I", self.data[entry_offset : entry_offset + thunk_size])[0]
-                entry_offset += thunk_size
-                if val == 0:
-                    break
+                        if val & ordinal_mask:
+                            ord_num = val & 0xFFFF
+                            symbols.append(ImportSymbol(name=None, ordinal=ord_num))
+                        else:
+                            name_ptr = val & 0x7FFFFFFFFFFFFFFF if is_64 else val & 0x7FFFFFFF
+                            name_file_offset = self.rva_to_offset(name_ptr)
+                            if name_file_offset is not None and name_file_offset + 2 < len(self.data):
+                                sym_name = self._read_asciiz(name_file_offset + 2)
+                                symbols.append(ImportSymbol(name=sym_name, ordinal=None))
 
-                if val & ordinal_mask:
-                    ord_num = val & 0xFFFF
-                    symbols.append(ImportSymbol(name=None, ordinal=ord_num))
-                else:
-                    name_ptr = val & 0x7FFFFFFFFFFFFFFF if is_64 else val & 0x7FFFFFFF
-                    name_file_offset = self.rva_to_offset(name_ptr)
-                    if name_file_offset is not None and name_file_offset + 2 < len(self.data):
-                        sym_name = self._read_asciiz(name_file_offset + 2)
-                        symbols.append(ImportSymbol(name=sym_name, ordinal=None))
+                    descriptors.append(ImportDescriptor(dll_name=dll_name, symbols=symbols, is_delay_loaded=False))
 
-            descriptors.append(ImportDescriptor(dll_name=dll_name, symbols=symbols))
+        # Parse Delay-Load Imports if requested
+        if include_delay_load and hasattr(self, "delay_dir_offset") and self.delay_dir_offset + 8 <= len(self.data):
+            delay_rva = self._read_u32(self.delay_dir_offset)
+            delay_size = self._read_u32(self.delay_dir_offset + 4)
+            if delay_rva != 0 and delay_size != 0:
+                delay_offset = self.rva_to_offset(delay_rva)
+                if delay_offset is not None:
+                    curr_delay = delay_offset
+                    # Each IMAGE_DELAYLOAD_DESCRIPTOR is 32 bytes
+                    while curr_delay + 32 <= len(self.data):
+                        raw_delay = self.data[curr_delay : curr_delay + 32]
+                        if raw_delay == b"\x00" * 32:
+                            break
+
+                        attrs, d_name_rva, h_mod_rva, iat_rva, int_rva, bound_rva, unload_rva, ts = struct.unpack(
+                            "<IIIIIIII", raw_delay
+                        )
+                        curr_delay += 32
+
+                        d_name_offset = self.rva_to_offset(d_name_rva)
+                        if d_name_offset is None:
+                            continue
+
+                        delay_dll_name = self._read_asciiz(d_name_offset)
+                        table_rva = int_rva if int_rva != 0 else iat_rva
+                        table_offset = self.rva_to_offset(table_rva)
+                        delay_symbols: List[ImportSymbol] = []
+
+                        if table_offset is not None:
+                            entry_off = table_offset
+                            while entry_off + thunk_size <= len(self.data):
+                                val = struct.unpack("<Q" if is_64 else "<I", self.data[entry_off : entry_off + thunk_size])[0]
+                                entry_off += thunk_size
+                                if val == 0:
+                                    break
+                                if val & ordinal_mask:
+                                    delay_symbols.append(ImportSymbol(name=None, ordinal=val & 0xFFFF))
+                                else:
+                                    n_ptr = val & 0x7FFFFFFFFFFFFFFF if is_64 else val & 0x7FFFFFFF
+                                    # In delay load, n_ptr could be RVA or VA depending on attributes bit 0 (dlattrRva = 1)
+                                    # If VA: n_ptr - image_base
+                                    if n_ptr >= self.image_base:
+                                        n_ptr -= self.image_base
+                                    n_off = self.rva_to_offset(n_ptr)
+                                    if n_off is not None and n_off + 2 < len(self.data):
+                                        delay_symbols.append(ImportSymbol(name=self._read_asciiz(n_off + 2), ordinal=None))
+
+                        descriptors.append(ImportDescriptor(dll_name=delay_dll_name, symbols=delay_symbols, is_delay_loaded=True))
 
         return descriptors

@@ -94,6 +94,7 @@ class ImportDescriptor:
     """Represents a DLL dependency and its imported symbols."""
     dll_name: str
     symbols: List[ImportSymbol] = field(default_factory=list)
+    is_delay_loaded: bool = False
 
 
 @dataclass
@@ -107,6 +108,7 @@ class PeExportInfo:
     symbols: List[ExportSymbol] = field(default_factory=list)
     sha256: str = ""
     mitigations: Optional[PeMitigations] = None
+    tls_callbacks: List[int] = field(default_factory=list)
 
     @property
     def named_exports(self) -> List[ExportSymbol]:
