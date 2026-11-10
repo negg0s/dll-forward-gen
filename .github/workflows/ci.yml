@@ -32,7 +32,23 @@ jobs:
       run: |
         cd cpp
         cl.exe /nologo /O2 /W4 /std:c++20 /EHsc dll_forward_gen.cpp /Fe:dll-forward-gen.exe
-        dll-forward-gen.exe C:\Windows\System32\version.dll
+        dll-forward-gen.exe C:\Windows\System32\version.dll --dump
+        dll-forward-gen.exe C:\Windows\System32\version.dll -m masm -o cpp_masm_out
+        dll-forward-gen.exe C:\Windows\System32\version.dll -H cpp_version_forward.h
+
+    - name: Compile and Run C++ SDK Tests
+      shell: cmd
+      run: |
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_inline_hook.cpp /Fe:test_inline_hook.exe
+        test_inline_hook.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_pattern_scan.cpp /Fe:test_pattern_scan.exe
+        test_pattern_scan.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_iat_hook.cpp /Fe:test_iat_hook.exe
+        test_iat_hook.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_eat_hook.cpp /Fe:test_eat_hook.exe
+        test_eat_hook.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_veh_hook.cpp /Fe:test_veh_hook.exe
+        test_veh_hook.exe
 
     - name: End-to-End MASM Compilation Check
       shell: cmd

@@ -29,6 +29,29 @@ class TestMasmGenerator(unittest.TestCase):
             ordinal_base=1,
             symbols=self.symbols,
         )
+        self.info_arm64 = PeExportInfo(
+            filepath=r"C:\Windows\System32\target.dll",
+            dll_name="target.dll",
+            arch=PeArch.ARM64,
+            timestamp=123456,
+            ordinal_base=1,
+            symbols=self.symbols,
+        )
+
+    def test_masm_arm64_generation(self):
+        gen = CodeGenerator(self.info_arm64, mode=GeneratorMode.MASM)
+        asm_code, cpp_code, def_code = gen.generate_masm_sources()
+
+        self.assertIn("AREA |.text|, CODE, READONLY", asm_code)
+        self.assertIn("IMPORT g_pfn_FunctionAlpha", asm_code)
+        self.assertIn("EXPORT proxy_FunctionAlpha", asm_code)
+        self.assertIn("adrp    x16, g_pfn_FunctionAlpha", asm_code)
+        self.assertIn("ldr     x16, [x16, :lo12:g_pfn_FunctionAlpha]", asm_code)
+        self.assertIn("br      x16", asm_code)
+
+        bat_code = gen.generate_build_bat("target_proxy")
+        self.assertIn("armasm64.exe", bat_code)
+        self.assertIn("/MACHINE:ARM64", bat_code)
 
     def test_masm_x64_generation(self):
         gen = CodeGenerator(self.info_x64, mode=GeneratorMode.MASM)

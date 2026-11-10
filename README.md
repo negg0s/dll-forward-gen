@@ -171,6 +171,52 @@ uint8_t* pfnTarget = dll_forward_gen::sdk::PatternScan::ScanModule(
 );
 ```
 
+### IAT (Import Address Table) Hooking (`sdk/iat_hook.hpp`)
+```cpp
+#include "sdk/iat_hook.hpp"
+
+// Hook target module's imported function atomically without modifying .text bytes
+dll_forward_gen::hook::IATHook iatHook;
+iatHook.Install(GetModuleHandleW(nullptr), "kernel32.dll", "CreateFileW", (void*)&MyCreateFileWHook);
+```
+
+### EAT (Export Address Table) Hooking (`sdk/eat_hook.hpp`)
+```cpp
+#include "sdk/eat_hook.hpp"
+
+// Redirect GetProcAddress queries at runtime by patching target module's export table
+dll_forward_gen::hook::EATHook eatHook;
+eatHook.Install(hTargetModule, "VirtualAlloc", (void*)&MyVirtualAllocHook);
+```
+
+### Stealth Hardware Breakpoint Hooking (`sdk/veh_hook.hpp`)
+```cpp
+#include "sdk/veh_hook.hpp"
+
+// Hook target function via CPU debug registers (DR0-DR3) + VEH
+// Evades CRC32/SHA256 memory code scanners with zero patched bytes!
+dll_forward_gen::hook::HardwareBreakpointHook::Instance().Install(
+    (void*)pTargetFunction,
+    (void*)DetourFunction,
+    0 // DR0
+);
+```
+
+---
+
+## ⚡ Native C++20 Standalone CLI (`cpp/`)
+
+If you want a standalone binary without needing Python installed on the target machine:
+
+```bash
+cd cpp
+build.bat
+# Produces dll-forward-gen.exe (zero external dependencies)
+
+# Use it directly:
+dll-forward-gen.exe C:\Windows\System32\version.dll -m masm -o ./version_proxy
+```
+
 ---
 
 ## 🛠️ Forwarding Modes Compared
@@ -178,7 +224,7 @@ uint8_t* pfnTarget = dll_forward_gen::sdk::PatternScan::ScanModule(
 | Mode | Flag | Mechanism | Overhead | Best For |
 | :--- | :--- | :--- | :--- | :--- |
 | **Pragma** | `-m pragma` | `#pragma comment(linker, "/export:...")` | **0 CPU cycles** (PE loader handles redirect) | Fast drop-in loaders without function modifications |
-| **MASM** | `-m masm` | `stubs.asm` (`jmp [pfn]`) + `ml64.exe` | **0 register/stack overhead** (100% ABI fidelity) | DirectX, Vulkan, audio engines, low-latency gaming |
+| **MASM (x64/x86/ARM64)** | `-m masm` | `stubs.asm` (`jmp [pfn]`) + `ml64.exe` / `armasm64.exe` | **0 register/stack overhead** (100% ABI fidelity) | DirectX, Vulkan, audio engines, low-latency gaming, WoA |
 | **Trampoline** | `-m trampoline` | C++ wrapper functions + `GetProcAddress` | Function call overhead | Quick C++ tracing and logging across all functions |
 | **DEF** | `-m def` | Windows Module Definition (`.def`) | Linker level | MinGW, GCC, Clang cross-compilation |
 
@@ -192,7 +238,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 37 unit tests execute in ~0.13 seconds with zero external dependencies.
+All 38 unit tests execute in ~0.15 seconds with zero external dependencies.
 
 ---
 

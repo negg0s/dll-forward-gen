@@ -317,46 +317,82 @@ class CodeGenerator:
         hooked_symbols = [s for s in self.info.symbols if (s.name or s.safe_name) in self.hooked_symbols]
 
         # 1. Generate stubs.asm
-        asm_lines = [
-            f"; ===========================================================================",
-            f"; MASM Assembly JMP Trampoline Stubs for {self.info.dll_name}",
-            f"; Architecture: {self.info.arch.value} | Ptr Size: {ptr_type}",
-            f"; Zero-overhead, zero-register corruption assembly forwarding.",
-            f"; ===========================================================================",
-        ]
+        if self.info.arch == PeArch.ARM64:
+            asm_lines = [
+                "; ===========================================================================",
+                f"; ARM64 Assembly JMP Trampoline Stubs for {self.info.dll_name}",
+                "; Architecture: ARM64 | Syntax: armasm64",
+                "; Zero-overhead, register-preserving forwarding using AAPCS64 IP0 (X16)",
+                "; ===========================================================================",
+                "    AREA |.text|, CODE, READONLY",
+                "    ALIGN 4",
+                "",
+                "    ; --- External Function Pointer Declarations ---",
+            ]
+            for sym in unhooked_symbols:
+                asm_lines.append(f"    IMPORT g_pfn_{sym.safe_name}")
 
-        if not is_64:
             asm_lines.extend([
-                ".386",
-                ".model flat, c",
+                "",
+                "    ; --- Direct Assembly Jump Stubs ---",
             ])
 
-        asm_lines.extend([
-            ".code",
-            "",
-            "; --- External Function Pointer Declarations ---",
-        ])
+            for sym in unhooked_symbols:
+                asm_lines.extend([
+                    f"    EXPORT proxy_{sym.safe_name}",
+                    f"proxy_{sym.safe_name} PROC",
+                    f"    adrp    x16, g_pfn_{sym.safe_name}",
+                    f"    ldr     x16, [x16, :lo12:g_pfn_{sym.safe_name}]",
+                    f"    br      x16",
+                    f"proxy_{sym.safe_name} ENDP",
+                    "",
+                ])
 
-        for sym in unhooked_symbols:
-            asm_lines.append(f"extern g_pfn_{sym.safe_name} : {ptr_type}")
-
-        asm_lines.extend([
-            "",
-            "; --- Direct Assembly Jump Stubs ---",
-        ])
-
-        for sym in unhooked_symbols:
             asm_lines.extend([
-                f"proxy_{sym.safe_name} proc",
-                f"    jmp {ptr_type} ptr [g_pfn_{sym.safe_name}]",
-                f"proxy_{sym.safe_name} endp",
+                "    END",
                 "",
             ])
+        else:
+            asm_lines = [
+                f"; ===========================================================================",
+                f"; MASM Assembly JMP Trampoline Stubs for {self.info.dll_name}",
+                f"; Architecture: {self.info.arch.value} | Ptr Size: {ptr_type}",
+                f"; Zero-overhead, zero-register corruption assembly forwarding.",
+                f"; ===========================================================================",
+            ]
 
-        asm_lines.extend([
-            "end",
-            "",
-        ])
+            if not is_64:
+                asm_lines.extend([
+                    ".386",
+                    ".model flat, c",
+                ])
+
+            asm_lines.extend([
+                ".code",
+                "",
+                "; --- External Function Pointer Declarations ---",
+            ])
+
+            for sym in unhooked_symbols:
+                asm_lines.append(f"extern g_pfn_{sym.safe_name} : {ptr_type}")
+
+            asm_lines.extend([
+                "",
+                "; --- Direct Assembly Jump Stubs ---",
+            ])
+
+            for sym in unhooked_symbols:
+                asm_lines.extend([
+                    f"proxy_{sym.safe_name} proc",
+                    f"    jmp {ptr_type} ptr [g_pfn_{sym.safe_name}]",
+                    f"proxy_{sym.safe_name} endp",
+                    "",
+                ])
+
+            asm_lines.extend([
+                "end",
+                "",
+            ])
 
         # 2. Generate dllmain.cpp loader
         cpp_lines = [
@@ -486,8 +522,9 @@ class CodeGenerator:
     def generate_cmake(self, project_name: str) -> str:
         """Generate CMakeLists.txt for compiling the proxy DLL."""
         target_name = Path(self.info.dll_name).stem
+        asm_lang = "ASM_MARMASM" if self.info.arch == PeArch.ARM64 else "ASM_MASM"
         return f"""cmake_minimum_required(VERSION 3.20)
-project({project_name} LANGUAGES CXX C ASM_MASM)
+project({project_name} LANGUAGES CXX C {asm_lang})
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -519,9 +556,15 @@ endif()
     def generate_build_bat(self, project_name: str) -> str:
         """Generate build.bat for one-click compilation using MSVC cl.exe and MASM."""
         target_name = Path(self.info.dll_name).stem
-        is_64 = self.info.arch in (PeArch.X64, PeArch.ARM64, PeArch.UNKNOWN)
-        asm_tool = "ml64.exe" if is_64 else "ml.exe"
-        arch_flag = "X64" if is_64 else "X86"
+        if self.info.arch == PeArch.ARM64:
+            asm_tool = "armasm64.exe"
+            arch_flag = "ARM64"
+        elif self.info.arch in (PeArch.X64, PeArch.UNKNOWN):
+            asm_tool = "ml64.exe"
+            arch_flag = "X64"
+        else:
+            asm_tool = "ml.exe"
+            arch_flag = "X86"
 
         return f"""@echo off
 setlocal enabledelayedexpansion
