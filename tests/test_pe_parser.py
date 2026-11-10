@@ -1,6 +1,6 @@
 import os
 import unittest
-from dll_forward_gen.pe_parser import PeParser, PeParseError
+from dll_forward_gen.pe_parser import PeParser, PeParseError, demangle_symbol
 from dll_forward_gen.models import PeArch
 
 
@@ -26,34 +26,38 @@ class TestPeParser(unittest.TestCase):
         self.assertIn("version", info.dll_name.lower())
         self.assertIn(info.arch, [PeArch.X64, PeArch.X86, PeArch.ARM64])
         self.assertGreater(info.total_count, 0)
+        self.assertTrue(len(info.sha256) == 64)
+
+        # Mitigations check
+        self.assertIsNotNone(info.mitigations)
+        self.assertTrue(info.mitigations.dynamic_base)  # Windows system DLLs have ASLR
+        self.assertTrue(info.mitigations.nx_compat)  # and DEP/NX
 
         # version.dll always exports GetFileVersionInfoW and VerQueryValueW
         names = {s.name for s in info.symbols if s.name}
         self.assertIn("GetFileVersionInfoW", names)
         self.assertIn("VerQueryValueW", names)
 
-        # Check export symbol properties
         sym = next(s for s in info.symbols if s.name == "GetFileVersionInfoW")
         self.assertGreater(sym.ordinal, 0)
         self.assertGreater(sym.rva, 0)
 
     def test_rva_to_file_offset_logic(self):
-        # Test helper method
         parser = PeParser(b"")
         parser.sections = [
-            (0x1000, 0x1000, 0x400, 0x1000),  # va_start, virt_size, raw_ptr, raw_size
+            (0x1000, 0x1000, 0x400, 0x1000),
             (0x2000, 0x2000, 0x1400, 0x2000),
         ]
-        # In section 0: RVA 0x1200 -> raw_ptr + (0x1200 - 0x1000) = 0x400 + 0x200 = 0x600
-        offset = parser.rva_to_offset(0x1200)
-        self.assertEqual(offset, 0x600)
-
-        # In section 1: RVA 0x2500 -> 0x1400 + 0x500 = 0x1900
-        offset2 = parser.rva_to_offset(0x2500)
-        self.assertEqual(offset2, 0x1900)
-
-        # Out of bounds RVA
+        self.assertEqual(parser.rva_to_offset(0x1200), 0x600)
+        self.assertEqual(parser.rva_to_offset(0x2500), 0x1900)
         self.assertIsNone(parser.rva_to_offset(0x9999))
+
+    def test_demangle_msvc_symbol(self):
+        mangled = "?MyFunction@@YAHXZ"
+        demangled = demangle_symbol(mangled)
+        if demangled is not None:
+            self.assertIn("MyFunction", demangled)
+        self.assertIsNone(demangle_symbol("PlainCFunction"))
 
 
 if __name__ == "__main__":

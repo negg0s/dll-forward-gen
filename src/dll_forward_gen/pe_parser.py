@@ -1,10 +1,11 @@
-"""Zero-dependency PE (Portable Executable) binary parser for extracting DLL exports."""
+"""Zero-dependency PE (Portable Executable) binary parser for extracting DLL exports and security mitigations."""
 
+import hashlib
 import struct
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-from .models import ExportSymbol, PeArch, PeExportInfo
+from .models import ExportSymbol, PeArch, PeExportInfo, PeMitigations
 
 
 class PeParseError(Exception):
@@ -12,8 +13,24 @@ class PeParseError(Exception):
     pass
 
 
+def demangle_symbol(name: Optional[str]) -> Optional[str]:
+    """Demangle MSVC decorated C++ symbols using dbghelp.dll (Windows native)."""
+    if not name or not name.startswith("?"):
+        return None
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(2048)
+        # UNDNAME_COMPLETE = 0x0000
+        res = ctypes.windll.dbghelp.UnDecorateSymbolNameW(name, buf, 2048, 0)
+        if res > 0:
+            return buf.value
+    except Exception:
+        pass
+    return None
+
+
 class PeParser:
-    """Parses PE32 and PE32+ (x86 and x64) binaries to extract export directories."""
+    """Parses PE32 and PE32+ (x86 and x64) binaries to extract export directories and mitigations."""
 
     IMAGE_DOS_SIGNATURE = 0x5A4D  # "MZ"
     IMAGE_NT_SIGNATURE = 0x00004550  # "PE\0\0"
@@ -23,12 +40,13 @@ class PeParser:
     def __init__(self, data: bytes, filepath: str = ""):
         self.data = data
         self.filepath = filepath
-        # Section tuple: (virtual_address, virtual_size, raw_data_ptr, raw_data_size)
         self.sections: List[Tuple[int, int, int, int]] = []
         self.arch: PeArch = PeArch.UNKNOWN
         self.pe_offset: int = 0
         self.export_rva: int = 0
         self.export_size: int = 0
+        self.mitigations: Optional[PeMitigations] = None
+        self.sha256: str = hashlib.sha256(data).hexdigest() if data else ""
 
     @classmethod
     def from_file(cls, filepath: Union[str, Path]) -> "PeParser":
@@ -108,16 +126,27 @@ class PeParser:
 
         opt_magic = self._read_u16(opt_hdr_offset)
         if opt_magic == self.OPTIONAL_HDR_MAGIC_PE32:
-            # 32-bit PE
             export_dir_offset = opt_hdr_offset + 96
         elif opt_magic == self.OPTIONAL_HDR_MAGIC_PE32_PLUS:
-            # 64-bit PE
             export_dir_offset = opt_hdr_offset + 112
         else:
             raise PeParseError(f"Unsupported Optional Header magic: 0x{opt_magic:04X}")
 
         if opt_hdr_offset + size_of_opt_hdr > len(self.data):
             raise PeParseError("Optional Header exceeds file size")
+
+        # Extract DllCharacteristics (mitigations) at offset 70 in Optional Header
+        if size_of_opt_hdr >= 72:
+            dll_char = self._read_u16(opt_hdr_offset + 70)
+            self.mitigations = PeMitigations(
+                dynamic_base=bool(dll_char & 0x0040),
+                high_entropy_va=bool(dll_char & 0x0020),
+                nx_compat=bool(dll_char & 0x0100),
+                no_seh=bool(dll_char & 0x0400),
+                guard_cf=bool(dll_char & 0x4000),
+                wdm_driver=bool(dll_char & 0x2000),
+                ts_aware=bool(dll_char & 0x8000),
+            )
 
         if export_dir_offset + 8 <= opt_hdr_offset + size_of_opt_hdr:
             self.export_rva = self._read_u32(export_dir_offset)
@@ -139,7 +168,6 @@ class PeParser:
             raw_ptr = self._read_u32(sec_ptr + 20)
             self.sections.append((virt_addr, virt_size, raw_ptr, raw_size))
 
-        # Determine default DLL name from filepath or export table
         fallback_name = Path(self.filepath).name if self.filepath else "unknown.dll"
 
         # If no export directory present, return empty result
@@ -151,6 +179,8 @@ class PeParser:
                 timestamp=timestamp,
                 ordinal_base=1,
                 symbols=[],
+                sha256=self.sha256,
+                mitigations=self.mitigations,
             )
 
         # 6. Parse Export Directory
@@ -158,14 +188,6 @@ class PeParser:
         if export_file_offset is None:
             raise PeParseError(f"Failed to resolve Export Directory RVA 0x{self.export_rva:08X} to file offset")
 
-        # IMAGE_EXPORT_DIRECTORY structure (40 bytes)
-        # Offset 12: Name (RVA)
-        # Offset 16: Base (DWORD)
-        # Offset 20: NumberOfFunctions (DWORD)
-        # Offset 24: NumberOfNames (DWORD)
-        # Offset 28: AddressOfFunctions (RVA)
-        # Offset 32: AddressOfNames (RVA)
-        # Offset 36: AddressOfNameOrdinals (RVA)
         name_rva = self._read_u32(export_file_offset + 12)
         ordinal_base = self._read_u32(export_file_offset + 16)
         num_functions = self._read_u32(export_file_offset + 20)
@@ -181,8 +203,6 @@ class PeParser:
             if parsed_name:
                 dll_name = parsed_name
 
-        # Map function table indices to names
-        # index (0..num_functions-1) -> function name
         index_to_name: Dict[int, str] = {}
         names_offset = self.rva_to_offset(addr_names_rva)
         ordinals_offset = self.rva_to_offset(addr_ordinals_rva)
@@ -196,26 +216,25 @@ class PeParser:
                     sym_name = self._read_asciiz(fn_name_offset)
                     index_to_name[fn_idx] = sym_name
 
-        # Read AddressOfFunctions table
         symbols: List[ExportSymbol] = []
         functions_offset = self.rva_to_offset(addr_functions_rva)
         if functions_offset is not None:
             for idx in range(num_functions):
                 fn_rva = self._read_u32(functions_offset + (idx * 4))
                 if fn_rva == 0:
-                    # Unused slot / sparse export table
                     continue
 
                 ordinal = ordinal_base + idx
                 name = index_to_name.get(idx)
 
-                # Check if forwarded export: RVA falls inside Export Directory range
                 is_fwd = self.export_rva <= fn_rva < (self.export_rva + self.export_size)
                 fwd_str = None
                 if is_fwd:
                     fwd_offset = self.rva_to_offset(fn_rva)
                     if fwd_offset is not None:
                         fwd_str = self._read_asciiz(fwd_offset)
+
+                demangled = demangle_symbol(name) if name else None
 
                 symbols.append(
                     ExportSymbol(
@@ -224,6 +243,7 @@ class PeParser:
                         name=name,
                         is_forwarded=is_fwd,
                         forward_name=fwd_str,
+                        demangled_name=demangled,
                     )
                 )
 
@@ -234,4 +254,6 @@ class PeParser:
             timestamp=timestamp,
             ordinal_base=ordinal_base,
             symbols=symbols,
+            sha256=self.sha256,
+            mitigations=self.mitigations,
         )

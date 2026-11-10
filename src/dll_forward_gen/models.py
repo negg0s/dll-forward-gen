@@ -24,6 +24,32 @@ class PeArch(str, Enum):
 
 
 @dataclass(frozen=True)
+class PeMitigations:
+    """Security mitigations extracted from DllCharacteristics."""
+    dynamic_base: bool  # ASLR
+    high_entropy_va: bool  # 64-bit ASLR
+    nx_compat: bool  # DEP
+    no_seh: bool
+    guard_cf: bool  # Control Flow Guard
+    wdm_driver: bool
+    ts_aware: bool
+
+    def summary(self) -> List[str]:
+        flags = []
+        if self.dynamic_base:
+            flags.append("ASLR")
+        if self.high_entropy_va:
+            flags.append("HighEntropyVA")
+        if self.nx_compat:
+            flags.append("DEP/NX")
+        if self.guard_cf:
+            flags.append("CFG")
+        if self.no_seh:
+            flags.append("NoSEH")
+        return flags
+
+
+@dataclass(frozen=True)
 class ExportSymbol:
     """Represents a single exported symbol in a PE file."""
     ordinal: int
@@ -31,6 +57,7 @@ class ExportSymbol:
     name: Optional[str] = None
     is_forwarded: bool = False
     forward_name: Optional[str] = None
+    demangled_name: Optional[str] = None
 
     @property
     def is_ordinal_only(self) -> bool:
@@ -41,14 +68,14 @@ class ExportSymbol:
     def safe_name(self) -> str:
         """Identifier-safe function name."""
         if self.name:
-            # Replace characters illegal in C identifiers if needed
             return self.name.replace("?", "_").replace("@", "_")
         return f"Ordinal_{self.ordinal}"
 
     def __str__(self) -> str:
         fwd_str = f" -> {self.forward_name}" if self.is_forwarded else ""
         name_str = self.name if self.name else "<ordinal-only>"
-        return f"[@{self.ordinal}] {name_str} (RVA 0x{self.rva:08X}){fwd_str}"
+        demang_str = f" [{self.demangled_name}]" if self.demangled_name else ""
+        return f"[@{self.ordinal}] {name_str}{demang_str} (RVA 0x{self.rva:08X}){fwd_str}"
 
 
 @dataclass
@@ -60,6 +87,8 @@ class PeExportInfo:
     timestamp: int
     ordinal_base: int
     symbols: List[ExportSymbol] = field(default_factory=list)
+    sha256: str = ""
+    mitigations: Optional[PeMitigations] = None
 
     @property
     def named_exports(self) -> List[ExportSymbol]:
