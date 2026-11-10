@@ -2,7 +2,7 @@
 
 # dll-forward-gen
 
-**Enterprise-grade, zero-dependency Windows PE export forwarder, diff engine, & C++/MASM proxy generator.**
+**Enterprise-grade, zero-dependency Windows PE export forwarder, diff engine, & C++/MASM reverse engineering SDK.**
 
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org/)
 [![C++20](https://img.shields.io/badge/C++20-00599C?style=flat-square&logo=c%2B%2B&logoColor=white)](https://isocpp.org/)
@@ -13,7 +13,7 @@
 [![Dependencies](https://img.shields.io/badge/Dependencies-Zero-brightgreen?style=flat-square)](#)
 
 <p align="center">
-  <i>Parse any PE32 / PE32+ DLL, diff export tables across versions, audit target imports,<br/>and generate register-preserving MASM jump stubs, selective C++ detour hooks, or zero-overhead pragmas.</i>
+  <i>Parse any PE32 / PE32+ DLL, diff export tables, audit target executable imports,<br/>generate register-preserving MASM jump stubs, selective C++ detour hooks, or embeddable headers.</i>
 </p>
 
 ---
@@ -29,7 +29,12 @@ Writing export forwarding directives, resolving hundreds of ordinals by hand, an
 * **Zero External Dependencies:** Built with pure Python 3 standard library and clean native C++20. No `pefile` or third-party wheels required.
 * **Dual Engines:** Available both as a rich Python CLI and as a standalone native **C++20 binary** in `cpp/`.
 * **Zero Register/Stack Corruption (MASM Mode):** Generates direct assembly jump stubs (`jmp qword ptr [...]`), preserving 100% of registers (RCX, RDX, R8, R9, XMM0-3) and calling convention fidelity without compiler prologue/epilogue overhead.
+* **Header-Only Modding SDK (`sdk/`):**
+  * `sdk/inline_hook.hpp`: Ultra-lightweight x64/x86 inline hooking engine (14-byte indirect JMP / 5-byte relative JMP) with automatic trampoline generation and RAII `ScopedHook`.
+  * `sdk/pattern_scan.hpp`: High-performance IDA-style memory pattern scanner (`48 89 5C ? ? 48 83`) across loaded modules and specific PE sections.
 * **Selective Detour Hooking (`--hook <name>`):** Intercept 1 or 2 critical functions with custom C++ detour callbacks while forwarding the remaining hundreds of symbols untouched via MASM!
+* **Embeddable Single-File Header (`-H / --header-only`):** Generate a clean `#pragma once` header containing export forwarders to directly `#include` inside an existing C/C++ project.
+* **Batch Multi-DLL Generation (`--batch config.json`):** Generate dozens of proxies across your entire toolchain from a single declarative JSON config.
 * **Target Import Audit (`--check-target <exe>`):** Scans any target `.exe` import table (IAT/INT) and cross-references it against the proxy DLL to verify 100% export coverage.
 * **Export Diff Engine (`--diff <other.dll>`):** Compare export tables between two DLL versions to detect added, removed, ordinal-shifted, or modified exports.
 * **Security Mitigations Audit:** Inspects and displays PE DllCharacteristics: **ASLR**, **High Entropy 64-bit VA**, **DEP/NX**, **Control Flow Guard (CFG)**, and **NoSEH**.
@@ -74,32 +79,6 @@ dll-forward-gen.exe version.dll
 python -m dll_forward_gen version.dll --dump-only
 ```
 
-Output:
-```text
-==================================================================================
- PE EXPORT DIRECTORY: VERSION.dll
-==================================================================================
- File Path:       C:\Windows\System32\version.dll
- Architecture:    X64
- SHA-256:         d8383a8b4172f3e8f6e72c833ba38622...
- Mitigations:     ASLR, HighEntropyVA, DEP/NX, CFG
- Ordinal Base:    1
- Total Exports:   17 (Named: 17, Ordinal-only: 0, Forwarded: 2)
-----------------------------------------------------------------------------------
-ORDINAL   RVA          TYPE                    NAME / TARGET
-----------------------------------------------------------------------------------
-@1        0x000010F0   [FUNCTION]              GetFileVersionInfoA
-@2        0x00001110   [FUNCTION]              GetFileVersionInfoByHandle
-@3        0x00001AB0   [FUNCTION]              GetFileVersionInfoExA
-@4        0x00001090   [FUNCTION]              GetFileVersionInfoExW
-...
-@14       0x00005F5C   [FORWARDED]             VerLanguageNameA -> KERNEL32.VerLanguageNameA
-@15       0x00005F87   [FORWARDED]             VerLanguageNameW -> KERNEL32.VerLanguageNameW
-@16       0x000010D0   [FUNCTION]              VerQueryValueA
-@17       0x00001030   [FUNCTION]              VerQueryValueW
-==================================================================================
-```
-
 ### 2. Audit Target Executable Compatibility (`--check-target`)
 Ensure your proxy covers every function that your target game or application imports:
 
@@ -107,41 +86,11 @@ Ensure your proxy covers every function that your target game or application imp
 python -m dll_forward_gen ntdll.dll --check-target C:\Windows\System32\cmd.exe --dump-only
 ```
 
-Output:
-```text
-==================================================================================
- TARGET IMPORT AUDIT: cmd.exe -> ntdll.dll
-==================================================================================
- Imported Symbols: 10
-----------------------------------------------------------------------------------
-  [COVERED] RtlLookupFunctionEntry
-  [COVERED] RtlVirtualUnwind
-  [COVERED] NtOpenProcessToken
-  [COVERED] NtClose
-  ...
-----------------------------------------------------------------------------------
- Result: 10 covered, 0 missing
-==================================================================================
-```
-
 ### 3. Compare Export Tables Between DLL Versions (`--diff`)
 Detect API breaks, ordinal shifts, and new functions:
 
 ```bash
 python -m dll_forward_gen game_v1.dll --diff game_v2.dll
-```
-
-Output:
-```text
-==================================================================================
- EXPORT TABLE DIFF: game_v1.dll <-> game_v2.dll
-==================================================================================
- Summary: +2 added, -1 removed, ~1 modified, 45 identical
-----------------------------------------------------------------------------------
-  + [ADDED]    @48   CreateVulkanContext (RVA 0x0003F400)
-  - [REMOVED]  @12   LegacyDirectDrawInit (RVA 0x00012000)
-  ~ [MODIFIED] AudioEngineInit (Ordinal: @3 -> @5)
-==================================================================================
 ```
 
 ### 4. Selective Detour Hooking (`--hook`)
@@ -163,10 +112,63 @@ extern "C" void* __stdcall Hook_D3D11CreateDevice() {
 }
 ```
 
-### 5. Game Modding Local Suffix Mode (`--suffix`)
+### 5. Generate Embeddable Single-File Header (`-H`)
+Drop forwarding pragmas directly into your existing C/C++ solution without creating new projects:
+
 ```bash
-# Forwards to dxgi_orig.dll in the game directory instead of System32
-python -m dll_forward_gen dxgi.dll -o ./dxgi_proxy -m pragma --suffix _orig
+python -m dll_forward_gen version.dll -H -o ./my_project/version_forward.h
+```
+
+### 6. Batch Multi-DLL Generation (`--batch`)
+Configure multiple proxies in a single JSON file:
+
+```json
+{
+  "output_dir": "./game_proxies",
+  "proxies": [
+    { "dll": "dxgi.dll", "mode": "masm", "suffix": "_orig", "file_log": true },
+    { "dll": "dinput8.dll", "mode": "pragma", "suffix": "_orig" }
+  ]
+}
+```
+Run batch creation:
+```bash
+python -m dll_forward_gen --batch config.json
+```
+
+---
+
+## 🧰 Native C++20 Modding SDK (`sdk/`)
+
+The repository includes zero-dependency header-only utilities ready to `#include` in your mods or hooks:
+
+### Inline Hooking Engine (`sdk/inline_hook.hpp`)
+```cpp
+#include "sdk/inline_hook.hpp"
+
+using Present_t = HRESULT (__stdcall*)(void*, void*, UINT, UINT);
+Present_t g_OriginalPresent = nullptr;
+
+HRESULT __stdcall MyPresentHook(void* swapchain, void* src, UINT sync, UINT flags) {
+    // Custom frame overlay logic here!
+    return g_OriginalPresent(swapchain, src, sync, flags);
+}
+
+void InstallHooks() {
+    static dll_forward_gen::sdk::InlineHook hook;
+    hook.Install(pRealPresentAddress, &MyPresentHook, (void**)&g_OriginalPresent);
+}
+```
+
+### Memory Pattern Scanner (`sdk/pattern_scan.hpp`)
+```cpp
+#include "sdk/pattern_scan.hpp"
+
+// Scan loaded game module for an IDA-style signature with wildcards
+uint8_t* pfnTarget = dll_forward_gen::sdk::PatternScan::ScanModule(
+    L"game.exe",
+    "48 89 5C 24 ? 48 83 EC 20 48 8B 05 ? ? ? ?"
+);
 ```
 
 ---
@@ -182,29 +184,6 @@ python -m dll_forward_gen dxgi.dll -o ./dxgi_proxy -m pragma --suffix _orig
 
 ---
 
-## 📁 Generated Project Structure
-
-When generating a project (e.g. `-m masm`), the output directory contains:
-
-```text
-my_proxy/
-├── stubs.asm          # MASM direct assembly jump trampolines (x64 / x86)
-├── dllmain.cpp        # Real DLL loader & function pointer binder
-├── exports.def        # Export name-to-stub symbol mapping
-├── CMakeLists.txt     # Multi-platform CMake build configuration
-└── build.bat          # One-click batch build script for MSVC Developer Prompt
-```
-
-### One-Click Compilation
-Open a **Visual Studio Developer Command Prompt** and run:
-```bat
-cd my_proxy
-build.bat
-```
-Output DLL will be generated in `build/my_proxy.dll`.
-
----
-
 ## 🧪 Automated Testing
 
 Run the comprehensive test suite with Python's built-in `unittest`:
@@ -213,7 +192,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 34 unit tests execute in ~0.13 seconds with zero external dependencies.
+All 37 unit tests execute in ~0.13 seconds with zero external dependencies.
 
 ---
 

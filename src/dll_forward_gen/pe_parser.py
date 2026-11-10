@@ -1,6 +1,7 @@
 """Zero-dependency PE (Portable Executable) binary parser for extracting DLL exports, imports, and security mitigations."""
 
 import hashlib
+import os
 import struct
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -11,6 +12,30 @@ from .models import ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExpo
 class PeParseError(Exception):
     """Raised when PE parsing fails due to invalid format or corrupted headers."""
     pass
+
+
+def resolve_dll_path(name_or_path: str) -> Path:
+    """Resolve DLL input argument to an existing file path."""
+    p = Path(name_or_path)
+    if p.is_file():
+        return p.resolve()
+
+    search_dirs = [
+        Path.cwd(),
+        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32",
+        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "SysWOW64",
+    ]
+
+    for d in search_dirs:
+        candidate = d / name_or_path
+        if candidate.is_file():
+            return candidate.resolve()
+        if not name_or_path.lower().endswith(".dll"):
+            candidate_dll = d / f"{name_or_path}.dll"
+            if candidate_dll.is_file():
+                return candidate_dll.resolve()
+
+    raise FileNotFoundError(f"Could not locate DLL '{name_or_path}' locally or in Windows system directories.")
 
 
 def demangle_symbol(name: Optional[str]) -> Optional[str]:

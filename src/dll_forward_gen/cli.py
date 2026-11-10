@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__
+from .batch import run_batch_config
 from .diff import diff_export_tables
 from .generator import CodeGenerator, GeneratorMode
 from .models import ExportSymbol, PeExportInfo
-from .pe_parser import PeParser, PeParseError
+from .pe_parser import PeParser, PeParseError, resolve_dll_path
 
 # ANSI color codes for Windows 10/11 Terminal
 COLOR_RESET = "\033[0m"
@@ -33,30 +34,6 @@ def supports_color() -> bool:
     if not hasattr(sys.stdout, "isatty"):
         return False
     return sys.stdout.isatty() or os.environ.get("TERM") == "xterm-256color"
-
-
-def resolve_dll_path(name_or_path: str) -> Path:
-    """Resolve DLL input argument to an existing file path."""
-    p = Path(name_or_path)
-    if p.is_file():
-        return p.resolve()
-
-    search_dirs = [
-        Path.cwd(),
-        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32",
-        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "SysWOW64",
-    ]
-
-    for d in search_dirs:
-        candidate = d / name_or_path
-        if candidate.is_file():
-            return candidate.resolve()
-        if not name_or_path.lower().endswith(".dll"):
-            candidate_dll = d / f"{name_or_path}.dll"
-            if candidate_dll.is_file():
-                return candidate_dll.resolve()
-
-    raise FileNotFoundError(f"Could not locate DLL '{name_or_path}' locally or in Windows system directories.")
 
 
 def format_table(
@@ -233,8 +210,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "dll",
+        nargs="?",
+        default=None,
         type=str,
         help="Path to target DLL (or system DLL name like 'version.dll', 'dxgi.dll')",
+    )
+    parser.add_argument(
+        "--batch",
+        type=Path,
+        default=None,
+        help="Execute batch proxy generation from a JSON configuration file",
     )
     parser.add_argument(
         "-o",
@@ -300,6 +285,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Name of symbol to intercept with a custom C++ detour hook (can be specified multiple times)",
     )
     parser.add_argument(
+        "-H",
+        "--header-only",
+        action="store_true",
+        help="Generate a standalone embeddable C/C++ forwarding header (.h) instead of a full project",
+    )
+    parser.add_argument(
         "--dump-only",
         action="store_true",
         help="Print export directory details and exit without generating files",
@@ -332,6 +323,25 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     use_color = supports_color() and not args.no_color
+
+    if args.batch:
+        try:
+            generated = run_batch_config(args.batch)
+            c_grn = COLOR_GREEN if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+            print(f"\n{c_grn}[+] Batch generation completed ({len(generated)} proxies generated):{c_rst}")
+            for g in generated:
+                print(f"    - {g}")
+            return 0
+        except Exception as e:
+            c_red = COLOR_RED if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+            print(f"{c_red}[ERROR] Batch failed: {e}{c_rst}", file=sys.stderr)
+            return 1
+
+    if not args.dll:
+        print("[ERROR] Target DLL or --batch configuration required.", file=sys.stderr)
+        return 1
 
     try:
         resolved_path = resolve_dll_path(args.dll)
@@ -387,6 +397,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.suffix:
         stem = Path(info.dll_name).stem
         target_dll = f"{stem}{args.suffix}.dll"
+
+    if args.header_only:
+        gen = CodeGenerator(
+            info=info,
+            mode=GeneratorMode.PRAGMA,
+            target_dll=target_dll,
+            enable_logging=not args.no_logging,
+            enable_file_log=args.file_log,
+            hooked_symbols=args.hook,
+        )
+        hdr_src = gen.generate_header_only_source()
+        if args.output_dir:
+            out_file = args.output_dir if args.output_dir.suffix == ".h" else args.output_dir / f"{Path(info.dll_name).stem}_forward.h"
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(hdr_src, encoding="utf-8")
+            print(f"[+] Generated header-only forwarding file: {out_file}")
+        else:
+            print(hdr_src)
+        return 0
 
     mode = GeneratorMode(args.mode)
     gen = CodeGenerator(

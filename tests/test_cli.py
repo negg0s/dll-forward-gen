@@ -60,6 +60,18 @@ class TestCli(unittest.TestCase):
         self.assertIn("TARGET IMPORT AUDIT", output)
         self.assertIn("COVERED", output)
 
+    def test_cli_header_only_mode(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_file = Path(tmp_dir) / "version_forward.h"
+            exit_code = main(["version.dll", "-H", "-o", str(out_file), "--no-color"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(out_file.exists())
+            content = out_file.read_text(encoding="utf-8")
+            self.assertIn("#pragma once", content)
+            self.assertIn("#pragma comment(linker", content)
+            self.assertNotIn("DllMain", content)
+
     def test_cli_diff_mode(self):
         # Compare version.dll against itself (0 diff)
         f = io.StringIO()
