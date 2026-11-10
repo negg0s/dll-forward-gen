@@ -2,7 +2,7 @@
 
 # dll-forward-gen
 
-**Enterprise-grade, zero-dependency Windows PE export forwarder, diff engine, & C++/MASM reverse engineering SDK.**
+**Fast, zero-dependency Windows PE export forwarder, diff engine, and C++/MASM modding SDK.**
 
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org/)
 [![C++20](https://img.shields.io/badge/C++20-00599C?style=flat-square&logo=c%2B%2B&logoColor=white)](https://isocpp.org/)

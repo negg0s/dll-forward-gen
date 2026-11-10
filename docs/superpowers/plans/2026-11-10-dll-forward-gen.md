@@ -4,7 +4,7 @@
 
 **Goal:** Build a fast, zero-dependency PE (Portable Executable) export analyzer and C/C++ forwarding/stub generator for Windows that parses DLL export tables and generates build-ready proxy projects for API debugging, tracing, and instrumentation.
 
-**Architecture:** Pure Python 3 core without external runtime dependencies (using `struct`, `dataclasses`, `pathlib`, `argparse`). Modular design split into a robust PE32/PE32+ binary parser, code generators (Linker Pragma, Module Definition `.def`, and Dynamic Trampoline wrapper with `DllMain`), and a formatted CLI.
+**Architecture:** Pure Python 3 core without external runtime dependencies (using `struct`, `dataclasses`, `pathlib`, `argparse`). Modular design split into a PE32/PE32+ binary parser, code generators (Linker Pragma, Module Definition `.def`, and Dynamic Trampoline wrapper with `DllMain`), and a formatted CLI.
 
 **Tech Stack:** Python 3.12 (standard library only: `struct`, `dataclasses`, `pathlib`, `argparse`), C++20 / C templates, MSVC / Clang build scripts (`CMakeLists.txt`, `build.bat`), MASM (`ml64.exe` / `ml.exe`).
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Storage location: strictly `D:\dll-forward-gen` — no files or caches on `C:\`.
+- Storage location: strictly `D:\dll-forward-gen` - no files or caches on `C:\`.
 - Dependencies: Python 3 standard library only (`struct`, `dataclasses`, `typing`, `pathlib`, `argparse`, `hashlib`). No third-party packages required to run (`zero-deps`).
 - Architectures supported: PE32 (x86 32-bit) and PE32+ (x64 64-bit).
 - Edge cases handled: Ordinal-only exports (no name), pre-forwarded exports (`DLL.Symbol`), non-contiguous ordinal bases.
@@ -35,7 +35,7 @@
 - [x] Task 4: CLI Interface & Formatted Output
 - [x] Task 5: End-to-End Verification & MSVC Compilation Test
 
-### Phase 2: Enterprise-Grade Advanced Extensions
+### Phase 2: Advanced Extensions
 - [x] Task 6: Zero-Corruption MASM Assembly JMP Trampoline Generator (`masm` mode)
   - [x] Step 1: Write unit tests in `tests/test_masm_generator.py` testing generation of `.asm` file with direct `jmp qword ptr [...]` / `jmp dword ptr [...]`, `.def` file, and `dllmain.cpp`.
   - [x] Step 2: Implement MASM generator in `generator.py` and update `CMakeLists.txt` (`enable_language(ASM_MASM)`) and `build.bat` (`ml64.exe /c stubs.asm`).
