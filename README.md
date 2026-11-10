@@ -217,6 +217,17 @@ dll_forward_gen::stealth::WipeHeaders(hProxyModule);
 dll_forward_gen::stealth::HideFromDebugger();
 ```
 
+### Length Disassembler Engine (`sdk/lde.hpp`)
+```cpp
+#include "sdk/lde.hpp"
+
+// Decode exact instruction length (1-15 bytes) to avoid splitting instructions:
+size_t len = dll_forward_gen::hook::LengthDisassembler::DecodeInstruction(pCode, /*is64=*/true);
+
+// Calculate exact stolen bytes needed for a safe hook trampoline:
+size_t stolenBytes = dll_forward_gen::hook::LengthDisassembler::GetDisplacedLength(pCode, 14, true);
+```
+
 ---
 
 ## 📦 Zero-Dependency COFF Import Library Generator (`.lib`)
@@ -278,7 +289,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 48 unit tests execute in ~0.18 seconds with zero external dependencies.
+All 50 unit tests execute in ~0.20 seconds with zero external dependencies.
 
 ---
 
