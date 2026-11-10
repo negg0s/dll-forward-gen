@@ -25,7 +25,7 @@ class PeArch(str, Enum):
 
 @dataclass(frozen=True)
 class PeMitigations:
-    """Security mitigations extracted from DllCharacteristics."""
+    """Security mitigations extracted from DllCharacteristics and Load Config / Debug headers."""
     dynamic_base: bool  # ASLR
     high_entropy_va: bool  # 64-bit ASLR
     nx_compat: bool  # DEP
@@ -33,6 +33,7 @@ class PeMitigations:
     guard_cf: bool  # Control Flow Guard
     wdm_driver: bool
     ts_aware: bool
+    cet_compat: bool = False  # Intel CET Shadow Stack
 
     def summary(self) -> List[str]:
         flags = []
@@ -44,6 +45,8 @@ class PeMitigations:
             flags.append("DEP/NX")
         if self.guard_cf:
             flags.append("CFG")
+        if self.cet_compat:
+            flags.append("CET")
         if self.no_seh:
             flags.append("NoSEH")
         return flags
@@ -190,6 +193,18 @@ class RelocInfo:
 
 
 @dataclass
+class DebugInfo:
+    """Information extracted from PE Debug Directory (PDB CodeView, reproducible builds, CET)."""
+    has_debug_info: bool
+    pdb_path: Optional[str] = None
+    pdb_guid: Optional[str] = None
+    pdb_age: Optional[int] = None
+    symbol_server_url: Optional[str] = None
+    is_reproducible: bool = False
+    cet_compat: bool = False
+
+
+@dataclass
 class PeExportInfo:
     """Complete summary of a PE binary's export directory."""
     filepath: str
@@ -208,6 +223,7 @@ class PeExportInfo:
     anti_analysis: List[AntiAnalysisIndicator] = field(default_factory=list)
     rich_header: Optional[RichHeaderInfo] = None
     relocations: Optional[RelocInfo] = None
+    debug_info: Optional[DebugInfo] = None
 
     @property
     def named_exports(self) -> List[ExportSymbol]:

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from .models import (
     AntiAnalysisIndicator,
     AuthenticodeInfo,
+    DebugInfo,
     ExportSymbol,
     ImportDescriptor,
     ImportSymbol,
@@ -471,6 +472,20 @@ class PeParser:
         # Parse Base Relocations
         relocations = self._parse_relocations()
 
+        # Parse Debug Directory (PDB CodeView, reproducible builds, CET)
+        debug_info = self._parse_debug_directory()
+        if debug_info and debug_info.cet_compat and self.mitigations:
+            self.mitigations = PeMitigations(
+                dynamic_base=self.mitigations.dynamic_base,
+                high_entropy_va=self.mitigations.high_entropy_va,
+                nx_compat=self.mitigations.nx_compat,
+                no_seh=self.mitigations.no_seh,
+                guard_cf=self.mitigations.guard_cf,
+                wdm_driver=self.mitigations.wdm_driver,
+                ts_aware=self.mitigations.ts_aware,
+                cet_compat=True,
+            )
+
         # Heuristic scan for anti-analysis / anti-debug APIs in imports
         anti_analysis: List[AntiAnalysisIndicator] = []
         try:
@@ -507,6 +522,7 @@ class PeParser:
             anti_analysis=anti_analysis,
             rich_header=rich_header,
             relocations=relocations,
+            debug_info=debug_info,
         )
 
     def _read_resource_string(self, base_off: int, str_off: int) -> str:
@@ -847,6 +863,73 @@ class PeParser:
             total_relocs=total_relocs,
             blocks_count=blocks_count,
             type_distribution=type_counts,
+        )
+
+    def _parse_debug_directory(self) -> Optional[DebugInfo]:
+        """Parse PE Debug Directory to extract PDB symbol paths, GUIDs, and reproducible build info."""
+        if not hasattr(self, "export_dir_offset"):
+            return None
+        debug_dir_off = self.export_dir_offset + (6 * 8)
+        if debug_dir_off + 8 > len(self.data):
+            return None
+
+        debug_rva = self._read_u32(debug_dir_off)
+        debug_size = self._read_u32(debug_dir_off + 4)
+        if debug_rva == 0 or debug_size < 28:
+            return None
+
+        try:
+            base_file_off = self.rva_to_offset(debug_rva)
+        except PeParseError:
+            return None
+
+        pdb_path = None
+        pdb_guid = None
+        pdb_age = None
+        symbol_server_url = None
+        is_repro = False
+        cet_compat = False
+
+        num_entries = min(debug_size // 28, 16)
+        for i in range(num_entries):
+            e_off = base_file_off + (i * 28)
+            if e_off + 28 > len(self.data):
+                break
+            _, _, _, _, dtype, size_data, _, ptr_raw = struct.unpack("<IIHHIIII", self.data[e_off : e_off + 28])
+            if ptr_raw == 0 or ptr_raw + size_data > len(self.data):
+                continue
+
+            # CodeView (PDB)
+            if dtype == 2 and size_data >= 24:
+                cv_bytes = self.data[ptr_raw : ptr_raw + size_data]
+                if cv_bytes.startswith(b"RSDS"):
+                    guid_bytes = cv_bytes[4:20]
+                    pdb_age = struct.unpack("<I", cv_bytes[20:24])[0]
+                    pdb_path = cv_bytes[24:].split(b"\x00")[0].decode("utf-8", errors="replace")
+                    d1, d2, d3 = struct.unpack("<IHH", guid_bytes[:8])
+                    d4 = guid_bytes[8:16]
+                    pdb_guid = f"{d1:08X}{d2:04X}{d3:04X}{d4.hex().upper()}"
+                    pdb_fn = pdb_path.replace("/", "\\").split("\\")[-1]
+                    symbol_server_url = f"https://msdl.microsoft.com/download/symbols/{pdb_fn}/{pdb_guid}{pdb_age:X}/{pdb_fn}"
+
+            # Reproducible Build (REPRO)
+            elif dtype == 16:
+                is_repro = True
+
+            # Extended DLL Characteristics (CET Shadow Stack)
+            elif dtype == 20 and size_data >= 4:
+                ex_flags = struct.unpack("<I", self.data[ptr_raw : ptr_raw + 4])[0]
+                if ex_flags & 0x0001:
+                    cet_compat = True
+
+        return DebugInfo(
+            has_debug_info=True,
+            pdb_path=pdb_path,
+            pdb_guid=pdb_guid,
+            pdb_age=pdb_age,
+            symbol_server_url=symbol_server_url,
+            is_reproducible=is_repro,
+            cet_compat=cet_compat,
         )
 
     def preview_export(self, symbol_query: Union[str, int], preview_len: int = 32) -> Dict[str, Any]:

@@ -179,6 +179,24 @@ class TestPeParser(unittest.TestCase):
         self.assertIn("48 FF 25", preview["raw_bytes"])
         self.assertIn("Indirect JMP", preview["pattern"])
 
+    def test_parse_debug_directory(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        info = parser.parse()
+
+        self.assertIsNotNone(info.debug_info)
+        self.assertTrue(info.debug_info.has_debug_info)
+        if info.debug_info.pdb_path:
+            self.assertTrue(info.debug_info.pdb_path.endswith(".pdb"))
+            self.assertIsNotNone(info.debug_info.pdb_guid)
+            self.assertIsNotNone(info.debug_info.symbol_server_url)
+            self.assertIn("msdl.microsoft.com", info.debug_info.symbol_server_url)
+            self.assertTrue(info.debug_info.cet_compat)
+
+
 
 if __name__ == "__main__":
     unittest.main()

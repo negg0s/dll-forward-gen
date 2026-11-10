@@ -99,6 +99,20 @@ def format_table(
         dist_str = ", ".join(f"{k}: {v}" for k, v in info.relocations.type_distribution.items())
         lines.append(f" {c_bld}Relocations:{c_rst}    {info.relocations.total_relocs:,} entries in {info.relocations.blocks_count} blocks ({c_dim}{dist_str}{c_rst})")
 
+    if info.debug_info and info.debug_info.has_debug_info:
+        dbg_parts = []
+        if info.debug_info.pdb_path:
+            pdb_name = Path(info.debug_info.pdb_path).name
+            dbg_parts.append(f"PDB: {c_wht}{pdb_name}{c_rst}")
+        if info.debug_info.is_reproducible:
+            dbg_parts.append(f"{c_grn}[REPRODUCIBLE]{c_rst}")
+        if info.debug_info.cet_compat:
+            dbg_parts.append(f"{c_mag}[CET-SHADOW-STACK]{c_rst}")
+        if dbg_parts:
+            lines.append(f" {c_bld}Debug Info:{c_rst}     {' '.join(dbg_parts)}")
+            if info.debug_info.symbol_server_url:
+                lines.append(f" {c_bld}Symbol Server:{c_rst}  {c_dim}{info.debug_info.symbol_server_url}{c_rst}")
+
     if info.rich_header and info.rich_header.is_present:
         v_tag = f"{c_grn}[VALID CHECKSUM]{c_rst}" if info.rich_header.checksum_valid else f"{c_ylw}[KEY: 0x{info.rich_header.xor_key:08X}]{c_rst}"
         lines.append(f" {c_bld}Rich Header:{c_rst}    {len(info.rich_header.entries)} tool entries {v_tag}")
@@ -302,6 +316,15 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
             "blocks_count": info.relocations.blocks_count,
             "type_distribution": info.relocations.type_distribution,
         } if info.relocations and info.relocations.is_present else None,
+        "debug_info": {
+            "has_debug_info": info.debug_info.has_debug_info,
+            "pdb_path": info.debug_info.pdb_path,
+            "pdb_guid": info.debug_info.pdb_guid,
+            "pdb_age": info.debug_info.pdb_age,
+            "symbol_server_url": info.debug_info.symbol_server_url,
+            "is_reproducible": info.debug_info.is_reproducible,
+            "cet_compat": info.debug_info.cet_compat,
+        } if info.debug_info and info.debug_info.has_debug_info else None,
         "symbols": [
             {
                 "ordinal": s.ordinal,

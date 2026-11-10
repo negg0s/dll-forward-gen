@@ -139,7 +139,7 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             exported_files = list(Path(tmp_dir).glob("*.hpp"))
-            self.assertGreaterEqual(len(exported_files), 9)
+            self.assertGreaterEqual(len(exported_files), 10)
             file_names = {p.name for p in exported_files}
             self.assertIn("inline_hook.hpp", file_names)
             self.assertIn("pattern_scan.hpp", file_names)
@@ -150,6 +150,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("lde.hpp", file_names)
             self.assertIn("pe_loader.hpp", file_names)
             self.assertIn("iat_resolver.hpp", file_names)
+            self.assertIn("reloc.hpp", file_names)
 
 
     def test_cli_generate_lib(self):

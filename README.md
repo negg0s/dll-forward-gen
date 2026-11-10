@@ -266,6 +266,20 @@ bool success = dll_forward_gen::loader::IATResolver::ResolveAll(pMappedImageBase
 bool isBound = dll_forward_gen::loader::IATResolver::IsBound(pMappedImageBase, "KERNEL32.dll", "CreateFileW");
 ```
 
+### Base Relocation Processor (`sdk/reloc.hpp`)
+```cpp
+#include "sdk/reloc.hpp"
+
+// Apply PE base relocations (.reloc) when manually mapping or rebasing an image in memory:
+bool success = dll_forward_gen::loader::RelocProcessor::ApplyPreferred(pMappedImageBase);
+
+// Or apply with an explicit delta offset (newBase - oldBase):
+dll_forward_gen::loader::RelocProcessor::ApplyRelocations(pMappedImageBase, deltaOffset);
+
+// Count total non-absolute relocation entries in a PE image:
+size_t relocCount = dll_forward_gen::loader::RelocProcessor::CountRelocations(pMappedImageBase);
+```
+
 ### Length Disassembler Engine (`sdk/lde.hpp`)
 ```cpp
 #include "sdk/lde.hpp"
@@ -338,7 +352,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 61 unit tests execute in ~0.50 seconds with zero external dependencies.
+All 62 unit tests execute in ~0.50 seconds with zero external dependencies.
 
 ---
 
