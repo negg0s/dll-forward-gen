@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Set up MSVC Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Run Python Automated Test Suite
+      shell: pwsh
+      run: |
+        $env:PYTHONPATH="src;."
+        python -m unittest discover -s tests -v
+
+    - name: Compile and Test Native C++20 Engine
+      shell: cmd
+      run: |
+        cd cpp
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc dll_forward_gen.cpp /Fe:dll-forward-gen.exe
+        dll-forward-gen.exe C:\Windows\System32\version.dll
+
+    - name: End-to-End MASM Compilation Check
+      shell: cmd
+      run: |
+        python -m dll_forward_gen version.dll -o e2e_proxy -m masm --file-log
+        cd e2e_proxy
+        ml64.exe /c /nologo /Fostubs.obj stubs.asm
+        cl.exe /nologo /O2 /W4 /LD dllmain.cpp stubs.obj /DEF:exports.def /Fe:version.dll /link /MACHINE:X64
