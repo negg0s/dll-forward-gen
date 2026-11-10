@@ -36,32 +36,32 @@
 - [x] Task 5: End-to-End Verification & MSVC Compilation Test
 
 ### Phase 2: Enterprise-Grade Advanced Extensions
-- [ ] Task 6: Zero-Corruption MASM Assembly JMP Trampoline Generator (`masm` mode)
-  - [ ] Step 1: Write unit tests in `tests/test_masm_generator.py` testing generation of `.asm` file with direct `jmp qword ptr [...]` / `jmp dword ptr [...]`, `.def` file, and `dllmain.cpp`.
-  - [ ] Step 2: Implement MASM generator in `generator.py` and update `CMakeLists.txt` (`enable_language(ASM_MASM)`) and `build.bat` (`ml64.exe /c stubs.asm`).
-  - [ ] Step 3: Run generator tests and verify MASM syntax.
-  - [ ] Step 4: Commit task 6.
+- [x] Task 6: Zero-Corruption MASM Assembly JMP Trampoline Generator (`masm` mode)
+  - [x] Step 1: Write unit tests in `tests/test_masm_generator.py` testing generation of `.asm` file with direct `jmp qword ptr [...]` / `jmp dword ptr [...]`, `.def` file, and `dllmain.cpp`.
+  - [x] Step 2: Implement MASM generator in `generator.py` and update `CMakeLists.txt` (`enable_language(ASM_MASM)`) and `build.bat` (`ml64.exe /c stubs.asm`).
+  - [x] Step 3: Run generator tests and verify MASM syntax.
+  - [x] Step 4: Commit task 6.
 
-- [ ] Task 7: Security Mitigations Audit & C++ Symbol Demangler
-  - [ ] Step 1: Add tests for DllCharacteristics parsing (ASLR, High-Entropy VA, DEP/NX, Control Flow Guard, SafeSEH) and SHA-256 calculation.
-  - [ ] Step 2: Add C++ decorated name demangling using Windows `dbghelp.dll` (`UnDecorateSymbolNameW`) fallback.
-  - [ ] Step 3: Run tests to verify parser extensions.
-  - [ ] Step 4: Commit task 7.
+- [x] Task 7: Security Mitigations Audit & C++ Symbol Demangler
+  - [x] Step 1: Add tests for DllCharacteristics parsing (ASLR, High-Entropy VA, DEP/NX, Control Flow Guard, SafeSEH) and SHA-256 calculation.
+  - [x] Step 2: Add C++ decorated name demangling using Windows `dbghelp.dll` (`UnDecorateSymbolNameW`) fallback.
+  - [x] Step 3: Run tests to verify parser extensions.
+  - [x] Step 4: Commit task 7.
 
-- [ ] Task 8: Local App Modding Suffix Forwarding & Dedicated File Logging
-  - [ ] Step 1: Write tests for `--suffix` option (e.g. forward to `<dll_stem>_orig.dll` in app directory instead of `System32`).
-  - [ ] Step 2: Implement configurable target modes: `system` (default) vs `suffix` (local modding) and automatic runtime file logging (`proxy_log.txt`).
-  - [ ] Step 3: Verify with unit tests.
-  - [ ] Step 4: Commit task 8.
+- [x] Task 8: Local App Modding Suffix Forwarding & Dedicated File Logging
+  - [x] Step 1: Write tests for `--suffix` option (e.g. forward to `<dll_stem>_orig.dll` in app directory instead of `System32`).
+  - [x] Step 2: Implement configurable target modes: `system` (default) vs `suffix` (local modding) and automatic runtime file logging (`proxy_log.txt`).
+  - [x] Step 3: Verify with unit tests.
+  - [x] Step 4: Commit task 8.
 
-- [ ] Task 9: Terminal ANSI Color UI & Interactive Search/Filtering
-  - [ ] Step 1: Implement `--filter <regex_or_query>` and `--ordinal <num>` in CLI.
-  - [ ] Step 2: Add ANSI color highlighting (green for forwarded, cyan for functions, yellow for ordinal-only, bold purple for mitigations).
-  - [ ] Step 3: Update `test_cli.py` with tests for filter and ordinal lookup.
-  - [ ] Step 4: Commit task 9.
+- [x] Task 9: Terminal ANSI Color UI & Interactive Search/Filtering
+  - [x] Step 1: Implement `--filter <regex_or_query>` and `--ordinal <num>` in CLI.
+  - [x] Step 2: Add ANSI color highlighting (green for forwarded, cyan for functions, yellow for ordinal-only, bold purple for mitigations).
+  - [x] Step 3: Update `test_cli.py` with tests for filter and ordinal lookup.
+  - [x] Step 4: Commit task 9.
 
-- [ ] Task 10: End-to-End MASM Compilation with `ml64.exe` & Documentation Update
-  - [ ] Step 1: Generate MASM proxy for `version.dll` and compile with `ml64.exe` + `cl.exe`.
-  - [ ] Step 2: Verify binary with `dll-forward-gen` parser.
-  - [ ] Step 3: Update `README.md` with MASM mode, security mitigations, and modding guide.
-  - [ ] Step 4: Final cleanup of disk C: and final git commit.
+- [x] Task 10: End-to-End MASM Compilation with `ml64.exe` & Documentation Update
+  - [x] Step 1: Generate MASM proxy for `version.dll` and compile with `ml64.exe` + `cl.exe`.
+  - [x] Step 2: Verify binary with `dll-forward-gen` parser.
+  - [x] Step 3: Update `README.md` with MASM mode, security mitigations, and modding guide.
+  - [x] Step 4: Final cleanup of disk C: and final git commit.
