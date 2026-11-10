@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    env:
+      PYTHONPATH: src
 
     steps:
     - uses: actions/checkout@v4
@@ -17,6 +19,10 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+
+    - name: Install Package in Editable Mode
+      shell: cmd
+      run: pip install -e .
 
     - name: Set up MSVC Developer Command Prompt
       uses: ilammy/msvc-dev-cmd@v1
