@@ -95,6 +95,14 @@ def format_table(
     if info.manifest:
         lines.append(f" {c_bld}Manifest:{c_rst}        {c_grn}[EMBEDDED XML]{c_rst} ({len(info.manifest):,} bytes)")
 
+    if info.relocations and info.relocations.is_present:
+        dist_str = ", ".join(f"{k}: {v}" for k, v in info.relocations.type_distribution.items())
+        lines.append(f" {c_bld}Relocations:{c_rst}    {info.relocations.total_relocs:,} entries in {info.relocations.blocks_count} blocks ({c_dim}{dist_str}{c_rst})")
+
+    if info.rich_header and info.rich_header.is_present:
+        v_tag = f"{c_grn}[VALID CHECKSUM]{c_rst}" if info.rich_header.checksum_valid else f"{c_ylw}[KEY: 0x{info.rich_header.xor_key:08X}]{c_rst}"
+        lines.append(f" {c_bld}Rich Header:{c_rst}    {len(info.rich_header.entries)} tool entries {v_tag}")
+
     if info.anti_analysis:
         lines.append(f" {c_bld}Security Alerts:{c_rst} {c_red}[!] {len(info.anti_analysis)} anti-analysis / injection indicators detected{c_rst}")
 
@@ -274,6 +282,26 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
             }
             for a in info.anti_analysis
         ],
+        "rich_header": {
+            "is_present": info.rich_header.is_present,
+            "xor_key": f"0x{info.rich_header.xor_key:08X}",
+            "checksum_valid": info.rich_header.checksum_valid,
+            "entries": [
+                {
+                    "prod_id": e.prod_id,
+                    "build_id": e.build_id,
+                    "count": e.count,
+                    "tool_name": e.tool_name,
+                }
+                for e in info.rich_header.entries
+            ],
+        } if info.rich_header and info.rich_header.is_present else None,
+        "relocations": {
+            "is_present": info.relocations.is_present,
+            "total_relocs": info.relocations.total_relocs,
+            "blocks_count": info.relocations.blocks_count,
+            "type_distribution": info.relocations.type_distribution,
+        } if info.relocations and info.relocations.is_present else None,
         "symbols": [
             {
                 "ordinal": s.ordinal,
@@ -368,6 +396,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Inspect specific ordinal number only",
+    )
+    parser.add_argument(
+        "--disasm",
+        type=str,
+        default=None,
+        help="Disassemble and preview entrypoint prologue bytes for an export symbol name or ordinal",
     )
     parser.add_argument(
         "--file-log",
@@ -520,6 +554,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(audit_target_imports(info, args.check_target, use_color=use_color))
         if args.dump_only:
             return 0
+
+    if args.disasm:
+        try:
+            preview = parser.preview_export(args.disasm)
+            sym = preview["symbol"]
+            c_cyn = COLOR_CYAN if use_color else ""
+            c_grn = COLOR_GREEN if use_color else ""
+            c_wht = COLOR_WHITE if use_color else ""
+            c_dim = COLOR_DIM if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+
+            print(f"\n{c_cyn}[+] Entrypoint Disassembly Preview: {c_wht}{sym.name or f'Ordinal_{sym.ordinal}'}{c_rst} (@{sym.ordinal})")
+            print(f"    RVA:             {preview['rva']}")
+            print(f"    Virtual Address: {preview['virtual_address']}")
+            if not preview["is_forwarded"]:
+                print(f"    File Offset:     {preview['file_offset']}")
+                print(f"    Raw Bytes:       {c_dim}{preview['raw_bytes']}{c_rst}")
+            print(f"    Pattern:         {c_grn}{preview['pattern']}{c_rst}\n")
+            if not args.output_dir and not args.dump_only:
+                return 0
+        except PeParseError as e:
+            c_red = COLOR_RED if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+            print(f"{c_red}[ERROR] Disassembly preview: {e}{c_rst}", file=sys.stderr)
+            return 1
 
     filter_query = args.filter or args.search
 

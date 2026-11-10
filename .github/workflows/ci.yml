@@ -61,6 +61,8 @@ jobs:
         test_lde.exe
         cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_pe_loader.cpp /Fe:test_pe_loader.exe
         test_pe_loader.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_iat_resolver.cpp /Fe:test_iat_resolver.exe
+        test_iat_resolver.exe
 
     - name: End-to-End MASM Compilation Check
       shell: cmd

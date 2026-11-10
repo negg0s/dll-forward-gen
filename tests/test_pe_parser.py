@@ -133,5 +133,52 @@ class TestPeParser(unittest.TestCase):
         self.assertIn("Anti-Debug", categories)
 
 
+    def test_parse_rich_header(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        info = parser.parse()
+
+        self.assertIsNotNone(info.rich_header)
+        self.assertTrue(info.rich_header.is_present)
+        self.assertNotEqual(info.rich_header.xor_key, 0)
+        self.assertTrue(info.rich_header.checksum_valid)
+        self.assertGreater(len(info.rich_header.entries), 0)
+        first_entry = info.rich_header.entries[0]
+        self.assertGreater(first_entry.build_id, 0)
+        self.assertGreater(first_entry.count, 0)
+
+
+    def test_parse_base_relocations(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        info = parser.parse()
+
+        self.assertIsNotNone(info.relocations)
+        self.assertTrue(info.relocations.is_present)
+        self.assertGreater(info.relocations.total_relocs, 0)
+        self.assertGreater(info.relocations.blocks_count, 0)
+        self.assertIn("DIR64", info.relocations.type_distribution)
+
+
+    def test_preview_export_disasm(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        preview = parser.preview_export("GetFileVersionInfoA")
+
+        self.assertFalse(preview["is_forwarded"])
+        self.assertEqual(preview["symbol"].name, "GetFileVersionInfoA")
+        self.assertIn("48 FF 25", preview["raw_bytes"])
+        self.assertIn("Indirect JMP", preview["pattern"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 
 class PeArch(str, Enum):
@@ -163,6 +163,33 @@ class AntiAnalysisIndicator:
 
 
 @dataclass
+class RichEntry:
+    """Single compiler/linker tool record from the decrypted PE Rich Header."""
+    prod_id: int
+    build_id: int
+    count: int
+    tool_name: str = ""
+
+
+@dataclass
+class RichHeaderInfo:
+    """MSVC Rich Header telemetry extracted between DOS stub and NT header."""
+    is_present: bool
+    xor_key: int = 0
+    checksum_valid: bool = False
+    entries: List[RichEntry] = field(default_factory=list)
+
+
+@dataclass
+class RelocInfo:
+    """Summary of PE base relocation directory (.reloc)."""
+    is_present: bool
+    total_relocs: int = 0
+    blocks_count: int = 0
+    type_distribution: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class PeExportInfo:
     """Complete summary of a PE binary's export directory."""
     filepath: str
@@ -179,6 +206,8 @@ class PeExportInfo:
     resources: List[ResourceItem] = field(default_factory=list)
     manifest: Optional[str] = None
     anti_analysis: List[AntiAnalysisIndicator] = field(default_factory=list)
+    rich_header: Optional[RichHeaderInfo] = None
+    relocations: Optional[RelocInfo] = None
 
     @property
     def named_exports(self) -> List[ExportSymbol]:

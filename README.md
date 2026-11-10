@@ -97,7 +97,24 @@ Detect API breaks, ordinal shifts, and new functions:
 python -m dll_forward_gen game_v1.dll --diff game_v2.dll
 ```
 
-### 4. Selective Detour Hooking (`--hook`)
+### 4. Entrypoint Disassembly & Byte Preview (`--disasm`)
+Inspect a function's prologue bytes, detect indirect jump trampolines, and preview stack allocation:
+
+```bash
+python -m dll_forward_gen version.dll --disasm GetFileVersionInfoA
+```
+
+Output:
+```
+[+] Entrypoint Disassembly Preview: GetFileVersionInfoA (@1)
+    RVA:             0x000010F0
+    Virtual Address: 0x00000001800010F0
+    File Offset:     0x000010F0
+    Raw Bytes:       48 FF 25 D9 42 00 00 CC CC CC CC CC CC CC CC CC ...
+    Pattern:         x64 Indirect JMP Trampoline -> [RIP + 0x42D9] (VA 0x00000001800053D0)
+```
+
+### 5. Selective Detour Hooking (`--hook`)
 Forward 99% of functions with zero-overhead MASM, but intercept specific functions with custom C++ logic:
 
 ```bash
@@ -238,6 +255,17 @@ if (module.LoadFromMemory(dllBytes.data(), dllBytes.size())) {
 }
 ```
 
+### In-Memory Import Address Table Resolver (`sdk/iat_resolver.hpp`)
+```cpp
+#include "sdk/iat_resolver.hpp"
+
+// Dynamically resolve and bind all imported DLLs and function pointers in an unmapped image:
+bool success = dll_forward_gen::loader::IATResolver::ResolveAll(pMappedImageBase);
+
+// Inspect if a specific import is already bound to a live procedure address:
+bool isBound = dll_forward_gen::loader::IATResolver::IsBound(pMappedImageBase, "KERNEL32.dll", "CreateFileW");
+```
+
 ### Length Disassembler Engine (`sdk/lde.hpp`)
 ```cpp
 #include "sdk/lde.hpp"
@@ -310,7 +338,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 57 unit tests execute in ~0.50 seconds with zero external dependencies.
+All 61 unit tests execute in ~0.50 seconds with zero external dependencies.
 
 ---
 

@@ -6,7 +6,7 @@ import os
 import struct
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .models import (
     AntiAnalysisIndicator,
@@ -17,7 +17,10 @@ from .models import (
     PeArch,
     PeExportInfo,
     PeMitigations,
+    RelocInfo,
     ResourceItem,
+    RichEntry,
+    RichHeaderInfo,
     SectionInfo,
 )
 from .known_ordinals import lookup_known_ordinal
@@ -79,6 +82,29 @@ ANTI_ANALYSIS_RULES = {
     "GetTickCount": ("Timing-Evasion", "Tick count timing check for debugger single-stepping"),
     "VirtualQuery": ("Anti-Hook", "Queries page protection to detect modified .text hooks"),
     "VirtualQueryEx": ("Anti-Hook", "Queries remote page protection to detect hooks"),
+}
+
+KNOWN_RICH_PROD_IDS = {
+    0: "Unknown",
+    1: "Import0",
+    2: "Linker",
+    3: "Cvtres",
+    4: "Linker",
+    5: "Cvtres",
+    6: "Export",
+    147: "Utc_CPP",
+    148: "Utc_C",
+    149: "Utc_POGO",
+    150: "MASM",
+    255: "Linker",
+    256: "Cvtres",
+    257: "Utc_C",
+    258: "Utc_CPP",
+    259: "MASM",
+    260: "Linker",
+    261: "Cvtres",
+    264: "AliasObj",
+    268: "ResourceCompiler",
 }
 
 
@@ -439,6 +465,12 @@ class PeParser:
         # Parse PE .rsrc resources & manifest
         resources, manifest = self._parse_resources()
 
+        # Parse Rich Header
+        rich_header = self._parse_rich_header()
+
+        # Parse Base Relocations
+        relocations = self._parse_relocations()
+
         # Heuristic scan for anti-analysis / anti-debug APIs in imports
         anti_analysis: List[AntiAnalysisIndicator] = []
         try:
@@ -473,6 +505,8 @@ class PeParser:
             resources=resources,
             manifest=manifest,
             anti_analysis=anti_analysis,
+            rich_header=rich_header,
+            relocations=relocations,
         )
 
     def _read_resource_string(self, base_off: int, str_off: int) -> str:
@@ -705,3 +739,185 @@ class PeParser:
                         descriptors.append(ImportDescriptor(dll_name=delay_dll_name, symbols=delay_symbols, is_delay_loaded=True))
 
         return descriptors
+
+    def _parse_rich_header(self) -> Optional[RichHeaderInfo]:
+        """Parse and decrypt the MSVC Rich Header located in the DOS stub padding."""
+        if not hasattr(self, "pe_offset") or self.pe_offset < 0x80:
+            return None
+
+        search_region = self.data[:self.pe_offset]
+        rich_marker = b"Rich"
+        rich_pos = search_region.rfind(rich_marker)
+        if rich_pos == -1 or rich_pos + 8 > len(search_region):
+            return None
+
+        xor_key = struct.unpack("<I", search_region[rich_pos + 4 : rich_pos + 8])[0]
+        dans_mask = struct.pack("<I", 0x536E6144 ^ xor_key)  # "DanS" ^ xor_key
+        dans_pos = search_region.rfind(dans_mask, 0, rich_pos)
+        if dans_pos == -1 or dans_pos + 16 > rich_pos:
+            return None
+
+        raw_rec = search_region[dans_pos + 16 : rich_pos]
+        entries: List[RichEntry] = []
+        for i in range(0, len(raw_rec), 8):
+            if i + 8 > len(raw_rec):
+                break
+            comp_enc, count_enc = struct.unpack("<II", raw_rec[i : i + 8])
+            comp_id = comp_enc ^ xor_key
+            count = count_enc ^ xor_key
+            prod_id = comp_id >> 16
+            build_id = comp_id & 0xFFFF
+            tool_name = KNOWN_RICH_PROD_IDS.get(prod_id, f"Tool_0x{prod_id:04X}")
+            entries.append(RichEntry(prod_id=prod_id, build_id=build_id, count=count, tool_name=tool_name))
+
+        # Checksum verification
+        checksum = dans_pos
+        for i in range(dans_pos):
+            b = 0 if 0x3C <= i <= 0x3F else search_region[i]
+            rot = i % 32
+            val = ((b << rot) | (b >> (32 - rot))) & 0xFFFFFFFF if rot > 0 else b
+            checksum = (checksum + val) & 0xFFFFFFFF
+
+        for entry in entries:
+            comp_val = (entry.prod_id << 16) | entry.build_id
+            count_val = entry.count
+            rot = count_val % 32
+            val = ((comp_val << rot) | (comp_val >> (32 - rot))) & 0xFFFFFFFF if rot > 0 else comp_val
+            checksum = (checksum + val) & 0xFFFFFFFF
+
+        is_valid = checksum == xor_key
+
+        return RichHeaderInfo(
+            is_present=True,
+            xor_key=xor_key,
+            checksum_valid=is_valid,
+            entries=entries,
+        )
+
+    def _parse_relocations(self) -> Optional[RelocInfo]:
+        """Parse PE Base Relocation table (.reloc directory)."""
+        if not hasattr(self, "export_dir_offset"):
+            return None
+        reloc_dir_off = self.export_dir_offset + (5 * 8)
+        if reloc_dir_off + 8 > len(self.data):
+            return None
+
+        reloc_rva = self._read_u32(reloc_dir_off)
+        reloc_size = self._read_u32(reloc_dir_off + 4)
+        if reloc_rva == 0 or reloc_size == 0:
+            return RelocInfo(is_present=False)
+
+        try:
+            base_file_off = self.rva_to_offset(reloc_rva)
+        except PeParseError:
+            return RelocInfo(is_present=False)
+
+        curr = base_file_off
+        end = min(base_file_off + reloc_size, len(self.data))
+        total_relocs = 0
+        blocks_count = 0
+        type_names = {
+            0: "ABSOLUTE",
+            1: "HIGH",
+            2: "LOW",
+            3: "HIGHLOW",
+            4: "HIGHADJ",
+            5: "MIPS_JMPADDR",
+            9: "MIPS_JMPADDR16",
+            10: "DIR64",
+        }
+        type_counts: Dict[str, int] = {}
+
+        while curr + 8 <= end:
+            page_va, block_sz = struct.unpack("<II", self.data[curr : curr + 8])
+            if block_sz < 8 or curr + block_sz > end:
+                break
+            blocks_count += 1
+            num_entries = (block_sz - 8) // 2
+            for i in range(num_entries):
+                entry = struct.unpack("<H", self.data[curr + 8 + (i * 2) : curr + 10 + (i * 2)])[0]
+                rel_type = entry >> 12
+                name = type_names.get(rel_type, f"TYPE_{rel_type}")
+                type_counts[name] = type_counts.get(name, 0) + 1
+                total_relocs += 1
+            curr += block_sz
+
+        return RelocInfo(
+            is_present=True,
+            total_relocs=total_relocs,
+            blocks_count=blocks_count,
+            type_distribution=type_counts,
+        )
+
+    def preview_export(self, symbol_query: Union[str, int], preview_len: int = 32) -> Dict[str, Any]:
+        """Disassemble and extract entrypoint prologue bytes for an exported function."""
+        info = self.parse()
+        target_sym = None
+        if isinstance(symbol_query, int) or (isinstance(symbol_query, str) and symbol_query.isdigit()):
+            ord_val = int(symbol_query)
+            target_sym = next((s for s in info.symbols if s.ordinal == ord_val), None)
+        else:
+            target_sym = next((s for s in info.symbols if s.name and s.name.lower() == str(symbol_query).lower()), None)
+            if not target_sym:
+                target_sym = next((s for s in info.symbols if s.safe_name.lower() == str(symbol_query).lower()), None)
+
+        if not target_sym:
+            raise PeParseError(f"Export symbol '{symbol_query}' not found in {self.filepath}")
+
+        if target_sym.is_forwarded:
+            return {
+                "symbol": target_sym,
+                "is_forwarded": True,
+                "forward_name": target_sym.forward_name,
+                "rva": f"0x{target_sym.rva:08X}",
+                "virtual_address": f"0x{self.image_base + target_sym.rva:016X}",
+                "raw_bytes": "",
+                "pattern": f"Forwarder String -> {target_sym.forward_name}",
+            }
+
+        file_off = self.rva_to_offset(target_sym.rva)
+        if file_off is None or file_off >= len(self.data):
+            raise PeParseError(f"Cannot resolve RVA 0x{target_sym.rva:08X} to file offset")
+
+        raw_slice = self.data[file_off : file_off + preview_len]
+        hex_bytes = raw_slice.hex(" ").upper()
+
+        pattern = "Unknown Code"
+        if raw_slice.startswith(b"\x48\xff\x25"):
+            disp = struct.unpack("<i", raw_slice[3:7])[0]
+            target_va = self.image_base + target_sym.rva + 7 + disp
+            pattern = f"x64 Indirect JMP Trampoline -> [RIP + 0x{disp:X}] (VA 0x{target_va:016X})"
+        elif raw_slice.startswith(b"\xff\x25"):
+            addr = struct.unpack("<I", raw_slice[2:6])[0]
+            pattern = f"x86 Indirect JMP Stub -> [0x{addr:08X}]"
+        elif raw_slice.startswith(b"\xe9"):
+            rel = struct.unpack("<i", raw_slice[1:5])[0]
+            target_rva = target_sym.rva + 5 + rel
+            pattern = f"Direct Relative JMP -> RVA 0x{target_rva:08X}"
+        elif raw_slice.startswith(b"\x48\x89\x5c\x24"):
+            pattern = "x64 Standard Function Prologue (MOV [RSP+disp], RBX)"
+        elif raw_slice.startswith(b"\x40\x53"):
+            pattern = "x64 Function Prologue (PUSH RBX)"
+        elif raw_slice.startswith(b"\x48\x83\xec"):
+            imm = raw_slice[3]
+            pattern = f"x64 Stack Frame Allocation (SUB RSP, 0x{imm:02X})"
+        elif raw_slice.startswith(b"\x55\x8b\xec"):
+            pattern = "x86 Standard Frame (PUSH EBP; MOV EBP, ESP)"
+        elif raw_slice.startswith(b"\x8b\xff\x55\x8b\xec"):
+            pattern = "x86 Hotpatchable Standard Frame (MOV EDI, EDI; PUSH EBP; MOV EBP, ESP)"
+        elif raw_slice.startswith(b"\xc3"):
+            pattern = "Stub / Empty Return (RET)"
+        elif raw_slice.startswith(b"\x33\xc0\xc3"):
+            pattern = "Return Constant Zero (XOR EAX, EAX; RET)"
+        elif raw_slice.startswith(b"\xb8\x01\x00\x00\x00\xc3"):
+            pattern = "Return Constant TRUE (MOV EAX, 1; RET)"
+
+        return {
+            "symbol": target_sym,
+            "is_forwarded": False,
+            "rva": f"0x{target_sym.rva:08X}",
+            "virtual_address": f"0x{self.image_base + target_sym.rva:016X}",
+            "file_offset": f"0x{file_off:08X}",
+            "raw_bytes": hex_bytes,
+            "pattern": pattern,
+        }

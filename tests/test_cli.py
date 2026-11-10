@@ -139,7 +139,7 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             exported_files = list(Path(tmp_dir).glob("*.hpp"))
-            self.assertGreaterEqual(len(exported_files), 8)
+            self.assertGreaterEqual(len(exported_files), 9)
             file_names = {p.name for p in exported_files}
             self.assertIn("inline_hook.hpp", file_names)
             self.assertIn("pattern_scan.hpp", file_names)
@@ -149,6 +149,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("stealth.hpp", file_names)
             self.assertIn("lde.hpp", file_names)
             self.assertIn("pe_loader.hpp", file_names)
+            self.assertIn("iat_resolver.hpp", file_names)
 
 
     def test_cli_generate_lib(self):
@@ -190,6 +191,18 @@ class TestCli(unittest.TestCase):
             self.assertTrue(manifest_file.is_file())
             content = manifest_file.read_text(encoding="utf-8")
             self.assertIn("assembly", content)
+
+
+    def test_cli_disasm(self):
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "--disasm", "GetFileVersionInfoA", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("GetFileVersionInfoA", output)
+        self.assertIn("Raw Bytes:", output)
+        self.assertIn("Pattern:", output)
 
 
 if __name__ == "__main__":
