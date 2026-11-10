@@ -93,8 +93,9 @@ class TestMasmGenerator(unittest.TestCase):
             self.assertTrue((out_path / "exports.def").exists())
             self.assertTrue((out_path / "CMakeLists.txt").exists())
             self.assertTrue((out_path / "build.bat").exists())
+            self.assertTrue((out_path / "version.rc").exists())
             self.assertTrue((out_path / "target.lib").exists())
-            self.assertEqual(len(created), 6)
+            self.assertEqual(len(created), 7)
 
 
 if __name__ == "__main__":

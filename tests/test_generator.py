@@ -84,6 +84,8 @@ class TestGenerator(unittest.TestCase):
             self.assertTrue((out_path / "dllmain.cpp").exists())
             self.assertTrue((out_path / "CMakeLists.txt").exists())
             self.assertTrue((out_path / "build.bat").exists())
+            self.assertTrue((out_path / "version.rc").exists())
+            self.assertTrue((out_path / "target.lib").exists())
             self.assertGreater(len(created_files), 0)
 
 
