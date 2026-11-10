@@ -294,6 +294,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Compare export table of this DLL against a second DLL",
     )
     parser.add_argument(
+        "--hook",
+        action="append",
+        default=[],
+        help="Name of symbol to intercept with a custom C++ detour hook (can be specified multiple times)",
+    )
+    parser.add_argument(
         "--dump-only",
         action="store_true",
         help="Print export directory details and exit without generating files",
@@ -389,6 +395,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         target_dll=target_dll,
         enable_logging=not args.no_logging,
         enable_file_log=args.file_log,
+        hooked_symbols=args.hook,
     )
 
     created_files = gen.emit_project(out_dir)

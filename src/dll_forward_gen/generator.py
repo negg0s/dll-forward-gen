@@ -25,11 +25,13 @@ class CodeGenerator:
         target_dll: Optional[str] = None,
         enable_logging: bool = True,
         enable_file_log: bool = False,
+        hooked_symbols: Optional[List[str]] = None,
     ):
         self.info = info
         self.mode = mode
         self.enable_logging = enable_logging
         self.enable_file_log = enable_file_log
+        self.hooked_symbols = set(hooked_symbols or [])
 
         # If target DLL is not provided, default to system path: C:\Windows\System32\<dll_name>
         if target_dll:
@@ -284,6 +286,9 @@ class CodeGenerator:
         ptr_type = "qword" if is_64 else "dword"
         target_escaped_w = self.target_dll.replace("\\", "\\\\")
 
+        unhooked_symbols = [s for s in self.info.symbols if (s.name or s.safe_name) not in self.hooked_symbols]
+        hooked_symbols = [s for s in self.info.symbols if (s.name or s.safe_name) in self.hooked_symbols]
+
         # 1. Generate stubs.asm
         asm_lines = [
             f"; ===========================================================================",
@@ -305,7 +310,7 @@ class CodeGenerator:
             "; --- External Function Pointer Declarations ---",
         ])
 
-        for sym in self.info.symbols:
+        for sym in unhooked_symbols:
             asm_lines.append(f"extern g_pfn_{sym.safe_name} : {ptr_type}")
 
         asm_lines.extend([
@@ -313,7 +318,7 @@ class CodeGenerator:
             "; --- Direct Assembly Jump Stubs ---",
         ])
 
-        for sym in self.info.symbols:
+        for sym in unhooked_symbols:
             asm_lines.extend([
                 f"proxy_{sym.safe_name} proc",
                 f"    jmp {ptr_type} ptr [g_pfn_{sym.safe_name}]",
@@ -348,6 +353,25 @@ class CodeGenerator:
         cpp_lines.extend([
             "}",
             "",
+        ])
+
+        if hooked_symbols:
+            cpp_lines.extend([
+                "// --- User Customizable Detour Hooks ---",
+            ])
+            for sym in hooked_symbols:
+                cpp_lines.extend([
+                    f'extern "C" void* __stdcall Hook_{sym.safe_name}() {{',
+                    f'    OutputDebugStringA("[DETOUR HOOK] Intercepted {sym.safe_name}\\n");',
+                    f'    // Call original target function:',
+                    f'    FARPROC pfn = g_pfn_{sym.safe_name};',
+                    f'    if (!pfn) return NULL;',
+                    f'    return ((void* (__stdcall*)())pfn)();',
+                    f'}}',
+                    "",
+                ])
+
+        cpp_lines.extend([
             "// Real library loader and symbol resolver",
             "static BOOL LoadRealLibrary() {",
             "    if (g_hRealDll != NULL) return TRUE;",
@@ -423,10 +447,11 @@ class CodeGenerator:
             'EXPORTS',
         ]
         for sym in self.info.symbols:
+            target_symbol = f"Hook_{sym.safe_name}" if (sym.name or sym.safe_name) in self.hooked_symbols else f"proxy_{sym.safe_name}"
             if sym.is_ordinal_only:
-                def_lines.append(f"    {sym.safe_name}=proxy_{sym.safe_name} @{sym.ordinal} NONAME")
+                def_lines.append(f"    {sym.safe_name}={target_symbol} @{sym.ordinal} NONAME")
             else:
-                def_lines.append(f"    {sym.name}=proxy_{sym.safe_name} @{sym.ordinal}")
+                def_lines.append(f"    {sym.name}={target_symbol} @{sym.ordinal}")
         def_lines.append("")
 
         return "\n".join(asm_lines), "\n".join(cpp_lines), "\n".join(def_lines)
