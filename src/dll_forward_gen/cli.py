@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import List, Optional
 
@@ -49,6 +50,7 @@ def format_table(
     c_bld = COLOR_BOLD if use_color else ""
     c_cyn = COLOR_CYAN if use_color else ""
     c_grn = COLOR_GREEN if use_color else ""
+    c_red = COLOR_RED if use_color else ""
     c_ylw = COLOR_YELLOW if use_color else ""
     c_mag = COLOR_MAGENTA if use_color else ""
     c_dim = COLOR_DIM if use_color else ""
@@ -85,6 +87,27 @@ def format_table(
             sec_summaries.append(f"{c_wht}{s.name}{c_rst} ({s.entropy:.2f}H{pack_tag})")
         lines.append(f" {c_bld}Sections:{c_rst}        {', '.join(sec_summaries)}")
 
+    if info.resources:
+        type_counts = Counter(r.type_name for r in info.resources)
+        top_types = ", ".join(f"{name}: {cnt}" for name, cnt in type_counts.most_common(4))
+        lines.append(f" {c_bld}Resources:{c_rst}       {len(info.resources)} items ({c_dim}{top_types}{c_rst})")
+
+    if info.manifest:
+        lines.append(f" {c_bld}Manifest:{c_rst}        {c_grn}[EMBEDDED XML]{c_rst} ({len(info.manifest):,} bytes)")
+
+    if info.anti_analysis:
+        lines.append(f" {c_bld}Security Alerts:{c_rst} {c_red}[!] {len(info.anti_analysis)} anti-analysis / injection indicators detected{c_rst}")
+
+    if info.anti_analysis:
+        lines.extend([
+            f"{c_red}{'-' * 82}{c_rst}",
+            f" {c_red}[!] DETECTED ANTI-ANALYSIS & CODE INJECTION HEURISTICS:{c_rst}",
+        ])
+        for a in info.anti_analysis[:8]:
+            lines.append(f"   {c_ylw}[{a.category:<18}]{c_rst} {c_wht}{a.api_name:<26}{c_rst} {c_dim}(from {a.source_dll}){c_rst} -> {a.description}")
+        if len(info.anti_analysis) > 8:
+            lines.append(f"   {c_dim}... and {len(info.anti_analysis) - 8} more indicators{c_rst}")
+
     lines.extend([
         f"{c_cyn}{'-' * 82}{c_rst}",
         f"{c_bld}{'ORDINAL':<9} {'RVA':<12} {'TYPE':<14} {'NAME / TARGET'}{c_rst}",
@@ -97,7 +120,10 @@ def format_table(
     elif filter_query:
         query_re = re.compile(filter_query, re.IGNORECASE)
         filtered_symbols = [
-            s for s in filtered_symbols if (s.name and query_re.search(s.name)) or (s.forward_name and query_re.search(s.forward_name))
+            s for s in filtered_symbols if (s.name and query_re.search(s.name))
+            or (s.forward_name and query_re.search(s.forward_name))
+            or (s.demangled_name and query_re.search(s.demangled_name))
+            or (s.known_name and query_re.search(s.known_name))
         ]
 
     for sym in filtered_symbols:
@@ -132,6 +158,7 @@ def audit_target_imports(info: PeExportInfo, target_exe: Path, use_color: bool =
     c_bld = COLOR_BOLD if use_color else ""
     c_cyn = COLOR_CYAN if use_color else ""
     c_grn = COLOR_GREEN if use_color else ""
+    c_red = COLOR_RED if use_color else ""
     c_ylw = COLOR_YELLOW if use_color else ""
     c_red = COLOR_RED if use_color else ""
     c_dim = COLOR_DIM if use_color else ""
@@ -226,6 +253,27 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
             }
             for sec in info.sections
         ],
+        "resources": [
+            {
+                "type_id": r.type_id,
+                "type_name": r.type_name,
+                "resource_id": str(r.resource_id),
+                "lang_id": r.lang_id,
+                "rva": f"0x{r.rva:08X}",
+                "size": r.size,
+            }
+            for r in info.resources
+        ],
+        "manifest": info.manifest,
+        "anti_analysis": [
+            {
+                "category": a.category,
+                "api_name": a.api_name,
+                "source_dll": a.source_dll,
+                "description": a.description,
+            }
+            for a in info.anti_analysis
+        ],
         "symbols": [
             {
                 "ordinal": s.ordinal,
@@ -301,6 +349,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Filter exports by symbol name or forward target (substring or regex)",
     )
     parser.add_argument(
+        "-s",
+        "--search",
+        type=str,
+        default=None,
+        help="Search exports, demangled names, and known ordinals for a keyword or regex",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Extract embedded application manifest XML to specified path (or <stem>.manifest.xml)",
+    )
+    parser.add_argument(
         "--ordinal",
         type=int,
         default=None,
@@ -310,6 +373,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--file-log",
         action="store_true",
         help="Enable runtime file logging (proxy_log.txt) in generated proxy code",
+    )
+    parser.add_argument(
+        "-T",
+        "--trace",
+        action="store_true",
+        help="Enable runtime API call frequency profiling in trampoline mode (outputs proxy_call_trace.csv on exit)",
+    )
+    parser.add_argument(
+        "--gcc",
+        action="store_true",
+        help="Generate universal MinGW / GCC / Clang build scaffolding (stubs.s, Makefile, build_gcc.bat)",
     )
     parser.add_argument(
         "--check-target",
@@ -447,10 +521,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.dump_only:
             return 0
 
-    if args.dump_only or args.filter or args.ordinal is not None:
+    filter_query = args.filter or args.search
+
+    if args.manifest is not None:
+        if info.manifest:
+            manifest_out = Path(args.manifest) if isinstance(args.manifest, Path) else Path(f"{Path(info.dll_name).stem}.manifest.xml")
+            manifest_out.write_text(info.manifest, encoding="utf-8")
+            c_grn = COLOR_GREEN if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+            print(f"\n{c_grn}[+] Extracted embedded manifest XML: {manifest_out.resolve()}{c_rst}")
+            if not args.output_dir and not args.dump_only:
+                return 0
+        else:
+            c_ylw = COLOR_YELLOW if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+            print(f"\n{c_ylw}[!] Target PE '{info.dll_name}' has no embedded manifest resource.{c_rst}")
+            if not args.output_dir and not args.dump_only:
+                return 1
+
+    if args.dump_only or filter_query or args.ordinal is not None:
         table_output = format_table(
             info,
-            filter_query=args.filter,
+            filter_query=filter_query,
             ordinal_filter=args.ordinal,
             use_color=use_color,
         )
@@ -505,6 +597,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         enable_logging=not args.no_logging,
         enable_file_log=args.file_log,
         hooked_symbols=args.hook,
+        enable_gcc=args.gcc,
+        enable_trace=args.trace,
     )
 
     created_files = gen.emit_project(out_dir)

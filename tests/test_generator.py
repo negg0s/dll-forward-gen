@@ -75,6 +75,31 @@ class TestGenerator(unittest.TestCase):
         self.assertIn("FunctionAlpha=proxy_FunctionAlpha @1", def_source)
         self.assertIn("Ordinal_3=proxy_Ordinal_3 @3 NONAME", def_source)
 
+    def test_trampoline_trace_generation(self):
+        gen = CodeGenerator(self.info, mode=GeneratorMode.TRAMPOLINE, enable_trace=True)
+        cpp_source, _ = gen.generate_trampoline_sources()
+
+        self.assertIn("<atomic>", cpp_source)
+        self.assertIn("struct TraceStat", cpp_source)
+        self.assertIn("DumpTraceReport", cpp_source)
+        self.assertIn("proxy_call_trace.csv", cpp_source)
+        self.assertIn("call_count.fetch_add", cpp_source)
+
+    def test_gcc_scaffolding_emission(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_path = Path(tmp_dir)
+            gen = CodeGenerator(self.info, mode=GeneratorMode.MASM, enable_gcc=True)
+            created_files = gen.emit_project(out_path)
+
+            file_names = {p.name for p in created_files}
+            self.assertIn("stubs.s", file_names)
+            self.assertIn("Makefile", file_names)
+            self.assertIn("build_gcc.bat", file_names)
+
+            gas_content = (out_path / "stubs.s").read_text(encoding="utf-8")
+            self.assertIn(".intel_syntax noprefix", gas_content)
+            self.assertIn("jmp qword ptr [rip + g_pfn_FunctionAlpha]", gas_content)
+
     def test_project_emission_to_disk(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             out_path = Path(tmp_dir)

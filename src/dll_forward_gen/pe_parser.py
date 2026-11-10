@@ -8,8 +8,78 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from .models import AuthenticodeInfo, ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExportInfo, PeMitigations, SectionInfo
+from .models import (
+    AntiAnalysisIndicator,
+    AuthenticodeInfo,
+    ExportSymbol,
+    ImportDescriptor,
+    ImportSymbol,
+    PeArch,
+    PeExportInfo,
+    PeMitigations,
+    ResourceItem,
+    SectionInfo,
+)
 from .known_ordinals import lookup_known_ordinal
+
+
+RESOURCE_TYPE_NAMES = {
+    1: "RT_CURSOR",
+    2: "RT_BITMAP",
+    3: "RT_ICON",
+    4: "RT_MENU",
+    5: "RT_DIALOG",
+    6: "RT_STRING",
+    7: "RT_FONTDIR",
+    8: "RT_FONT",
+    9: "RT_ACCELERATOR",
+    10: "RT_RCDATA",
+    11: "RT_MESSAGETABLE",
+    12: "RT_GROUP_CURSOR",
+    14: "RT_GROUP_ICON",
+    16: "RT_VERSION",
+    17: "RT_DLGINCLUDE",
+    19: "RT_PLUGPLAY",
+    20: "RT_VXD",
+    21: "RT_ANICURSOR",
+    22: "RT_ANIICON",
+    23: "RT_HTML",
+    24: "RT_MANIFEST",
+}
+
+ANTI_ANALYSIS_RULES = {
+    # Anti-Debug
+    "IsDebuggerPresent": ("Anti-Debug", "Checks PEB BeingDebugged flag"),
+    "CheckRemoteDebuggerPresent": ("Anti-Debug", "Kernel-mode CheckRemoteDebuggerPresent check"),
+    "NtQueryInformationProcess": ("Anti-Debug", "Queries ProcessDebugPort / ProcessDebugFlags"),
+    "NtSetInformationThread": ("Anti-Debug", "Hides thread from debugger (ThreadHideFromDebugger)"),
+    "OutputDebugStringA": ("Anti-Debug", "Forces DBG_PRINT_EXCEPTION_C trap / GetLastError check"),
+    "OutputDebugStringW": ("Anti-Debug", "Forces DBG_PRINT_EXCEPTION_C trap / GetLastError check"),
+    "FindWindowA": ("Anti-Debug", "Searches for debugger / disassembler window titles"),
+    "FindWindowW": ("Anti-Debug", "Searches for debugger / disassembler window titles"),
+
+    # Memory Tampering / Injection
+    "VirtualProtect": ("Memory-Tampering", "Modifies memory page protection (R/W/X)"),
+    "VirtualProtectEx": ("Memory-Tampering", "Modifies remote process memory protection"),
+    "WriteProcessMemory": ("Memory-Tampering", "Writes payload memory to foreign process"),
+    "CreateRemoteThread": ("Process-Injection", "Spawns execution thread in foreign process"),
+    "NtUnmapViewOfSection": ("Process-Injection", "Process Hollowing unmap step"),
+    "QueueUserAPC": ("Process-Injection", "Early Bird / APC queue thread injection"),
+    "SetThreadContext": ("Process-Injection", "Thread context / instruction pointer manipulation"),
+
+    # Process / Module Enumeration
+    "CreateToolhelp32Snapshot": ("Process-Enumeration", "Enumerates running processes / modules"),
+    "Process32FirstW": ("Process-Enumeration", "Iterates running processes"),
+    "Process32NextW": ("Process-Enumeration", "Iterates running processes"),
+    "EnumProcessModules": ("Process-Enumeration", "Enumerates loaded DLL modules in process"),
+    "EnumProcesses": ("Process-Enumeration", "Enumerates active process IDs"),
+
+    # Timing Evasion / Anti-Hook
+    "QueryPerformanceCounter": ("Timing-Evasion", "High-resolution timing check for debugger single-stepping"),
+    "GetTickCount": ("Timing-Evasion", "Tick count timing check for debugger single-stepping"),
+    "VirtualQuery": ("Anti-Hook", "Queries page protection to detect modified .text hooks"),
+    "VirtualQueryEx": ("Anti-Hook", "Queries remote page protection to detect hooks"),
+}
 
 
 def calculate_entropy(data: bytes) -> float:
@@ -245,84 +315,71 @@ class PeParser:
         self._parse_headers()
 
         fallback_name = Path(self.filepath).name if self.filepath else "unknown.dll"
-
-        if self.export_rva == 0 or self.export_size == 0:
-            return PeExportInfo(
-                filepath=self.filepath,
-                dll_name=fallback_name,
-                arch=self.arch,
-                timestamp=self.timestamp,
-                ordinal_base=1,
-                symbols=[],
-                sha256=self.sha256,
-                mitigations=self.mitigations,
-                sections=self.section_infos,
-            )
-
-        export_file_offset = self.rva_to_offset(self.export_rva)
-        if export_file_offset is None:
-            raise PeParseError(f"Failed to resolve Export Directory RVA 0x{self.export_rva:08X} to file offset")
-
-        name_rva = self._read_u32(export_file_offset + 12)
-        ordinal_base = self._read_u32(export_file_offset + 16)
-        num_functions = self._read_u32(export_file_offset + 20)
-        num_names = self._read_u32(export_file_offset + 24)
-        addr_functions_rva = self._read_u32(export_file_offset + 28)
-        addr_names_rva = self._read_u32(export_file_offset + 32)
-        addr_ordinals_rva = self._read_u32(export_file_offset + 36)
-
-        dll_name = fallback_name
-        name_offset = self.rva_to_offset(name_rva)
-        if name_offset is not None:
-            parsed_name = self._read_asciiz(name_offset)
-            if parsed_name:
-                dll_name = parsed_name
-
-        index_to_name: Dict[int, str] = {}
-        names_offset = self.rva_to_offset(addr_names_rva)
-        ordinals_offset = self.rva_to_offset(addr_ordinals_rva)
-
-        if names_offset is not None and ordinals_offset is not None:
-            for i in range(num_names):
-                n_rva = self._read_u32(names_offset + (i * 4))
-                fn_idx = self._read_u16(ordinals_offset + (i * 2))
-                fn_name_offset = self.rva_to_offset(n_rva)
-                if fn_name_offset is not None:
-                    sym_name = self._read_asciiz(fn_name_offset)
-                    index_to_name[fn_idx] = sym_name
-
         symbols: List[ExportSymbol] = []
-        functions_offset = self.rva_to_offset(addr_functions_rva)
-        if functions_offset is not None:
-            for idx in range(num_functions):
-                fn_rva = self._read_u32(functions_offset + (idx * 4))
-                if fn_rva == 0:
-                    continue
+        dll_name = fallback_name
+        ordinal_base = 1
 
-                ordinal = ordinal_base + idx
-                name = index_to_name.get(idx)
+        if self.export_rva != 0 and self.export_size != 0:
+            export_file_offset = self.rva_to_offset(self.export_rva)
+            if export_file_offset is not None:
+                name_rva = self._read_u32(export_file_offset + 12)
+                ordinal_base = self._read_u32(export_file_offset + 16)
+                num_functions = self._read_u32(export_file_offset + 20)
+                num_names = self._read_u32(export_file_offset + 24)
+                addr_functions_rva = self._read_u32(export_file_offset + 28)
+                addr_names_rva = self._read_u32(export_file_offset + 32)
+                addr_ordinals_rva = self._read_u32(export_file_offset + 36)
 
-                is_fwd = self.export_rva <= fn_rva < (self.export_rva + self.export_size)
-                fwd_str = None
-                if is_fwd:
-                    fwd_offset = self.rva_to_offset(fn_rva)
-                    if fwd_offset is not None:
-                        fwd_str = self._read_asciiz(fwd_offset)
+                name_offset = self.rva_to_offset(name_rva)
+                if name_offset is not None:
+                    parsed_name = self._read_asciiz(name_offset)
+                    if parsed_name:
+                        dll_name = parsed_name
 
-                demangled = demangle_symbol(name) if name else None
-                known = lookup_known_ordinal(dll_name, ordinal) if name is None else None
+                index_to_name: Dict[int, str] = {}
+                names_offset = self.rva_to_offset(addr_names_rva)
+                ordinals_offset = self.rva_to_offset(addr_ordinals_rva)
 
-                symbols.append(
-                    ExportSymbol(
-                        ordinal=ordinal,
-                        rva=fn_rva,
-                        name=name,
-                        is_forwarded=is_fwd,
-                        forward_name=fwd_str,
-                        demangled_name=demangled,
-                        known_name=known,
-                    )
-                )
+                if names_offset is not None and ordinals_offset is not None:
+                    for i in range(num_names):
+                        n_rva = self._read_u32(names_offset + (i * 4))
+                        fn_idx = self._read_u16(ordinals_offset + (i * 2))
+                        fn_name_offset = self.rva_to_offset(n_rva)
+                        if fn_name_offset is not None:
+                            sym_name = self._read_asciiz(fn_name_offset)
+                            index_to_name[fn_idx] = sym_name
+
+                functions_offset = self.rva_to_offset(addr_functions_rva)
+                if functions_offset is not None:
+                    for idx in range(num_functions):
+                        fn_rva = self._read_u32(functions_offset + (idx * 4))
+                        if fn_rva == 0:
+                            continue
+
+                        ordinal = ordinal_base + idx
+                        name = index_to_name.get(idx)
+
+                        is_fwd = self.export_rva <= fn_rva < (self.export_rva + self.export_size)
+                        fwd_str = None
+                        if is_fwd:
+                            fwd_offset = self.rva_to_offset(fn_rva)
+                            if fwd_offset is not None:
+                                fwd_str = self._read_asciiz(fwd_offset)
+
+                        demangled = demangle_symbol(name) if name else None
+                        known = lookup_known_ordinal(dll_name, ordinal) if name is None else None
+
+                        symbols.append(
+                            ExportSymbol(
+                                ordinal=ordinal,
+                                rva=fn_rva,
+                                name=name,
+                                is_forwarded=is_fwd,
+                                forward_name=fwd_str,
+                                demangled_name=demangled,
+                                known_name=known,
+                            )
+                        )
 
         # Extract TLS callbacks if present
         tls_callbacks: List[int] = []
@@ -379,6 +436,28 @@ class PeParser:
             else:
                 authenticode = AuthenticodeInfo(is_signed=False)
 
+        # Parse PE .rsrc resources & manifest
+        resources, manifest = self._parse_resources()
+
+        # Heuristic scan for anti-analysis / anti-debug APIs in imports
+        anti_analysis: List[AntiAnalysisIndicator] = []
+        try:
+            imports = self.parse_imports(include_delay_load=True)
+            for desc in imports:
+                for sym in desc.symbols:
+                    if sym.name and sym.name in ANTI_ANALYSIS_RULES:
+                        category, rule_desc = ANTI_ANALYSIS_RULES[sym.name]
+                        anti_analysis.append(
+                            AntiAnalysisIndicator(
+                                category=category,
+                                api_name=sym.name,
+                                source_dll=desc.dll_name,
+                                description=rule_desc,
+                            )
+                        )
+        except Exception:
+            pass
+
         return PeExportInfo(
             filepath=self.filepath,
             dll_name=dll_name,
@@ -391,7 +470,130 @@ class PeParser:
             tls_callbacks=tls_callbacks,
             sections=self.section_infos,
             authenticode=authenticode,
+            resources=resources,
+            manifest=manifest,
+            anti_analysis=anti_analysis,
         )
+
+    def _read_resource_string(self, base_off: int, str_off: int) -> str:
+        """Read a length-prefixed Unicode string from resource directory."""
+        abs_off = base_off + str_off
+        if abs_off + 2 > len(self.data):
+            return ""
+        length = struct.unpack("<H", self.data[abs_off : abs_off + 2])[0]
+        if abs_off + 2 + (length * 2) > len(self.data):
+            return ""
+        return self.data[abs_off + 2 : abs_off + 2 + (length * 2)].decode("utf-16le", errors="replace")
+
+    def _parse_resources(self) -> Tuple[List[ResourceItem], Optional[str]]:
+        """Parse PE .rsrc directory tree and extract resources & embedded manifest."""
+        if not hasattr(self, "export_dir_offset"):
+            return [], None
+
+        rsrc_dir_off = self.export_dir_offset + 16
+        if rsrc_dir_off + 8 > len(self.data):
+            return [], None
+
+        rsrc_rva = self._read_u32(rsrc_dir_off)
+        rsrc_size = self._read_u32(rsrc_dir_off + 4)
+        if rsrc_rva == 0 or rsrc_size == 0:
+            return [], None
+
+        try:
+            base_off = self.rva_to_offset(rsrc_rva)
+        except PeParseError:
+            return [], None
+
+        if base_off + 16 > len(self.data):
+            return [], None
+
+        items: List[ResourceItem] = []
+        manifest_text: Optional[str] = None
+
+        # Root directory: Types
+        _, _, _, _, n_named, n_id = struct.unpack("<IIHHHH", self.data[base_off : base_off + 16])
+        total_types = n_named + n_id
+
+        for i in range(total_types):
+            type_entry_off = base_off + 16 + (i * 8)
+            if type_entry_off + 8 > len(self.data):
+                break
+            type_id_raw, type_data_off = struct.unpack("<II", self.data[type_entry_off : type_entry_off + 8])
+
+            if type_id_raw & 0x80000000:
+                type_name = self._read_resource_string(base_off, type_id_raw & 0x7FFFFFFF)
+                type_id = 0
+            else:
+                type_id = type_id_raw
+                type_name = RESOURCE_TYPE_NAMES.get(type_id, f"RT_UNKNOWN({type_id})")
+
+            # Must be a subdirectory
+            if not (type_data_off & 0x80000000):
+                continue
+
+            l2_dir_off = base_off + (type_data_off & 0x7FFFFFFF)
+            if l2_dir_off + 16 > len(self.data):
+                continue
+
+            _, _, _, _, l2_named, l2_id = struct.unpack("<IIHHHH", self.data[l2_dir_off : l2_dir_off + 16])
+            total_l2 = l2_named + l2_id
+
+            for j in range(total_l2):
+                l2_entry_off = l2_dir_off + 16 + (j * 8)
+                if l2_entry_off + 8 > len(self.data):
+                    break
+                res_id_raw, res_data_off = struct.unpack("<II", self.data[l2_entry_off : l2_entry_off + 8])
+
+                if res_id_raw & 0x80000000:
+                    res_id: Union[int, str] = self._read_resource_string(base_off, res_id_raw & 0x7FFFFFFF)
+                else:
+                    res_id = res_id_raw
+
+                # Check if points to Level 3 (Languages) or directly to data
+                if res_data_off & 0x80000000:
+                    l3_dir_off = base_off + (res_data_off & 0x7FFFFFFF)
+                    if l3_dir_off + 16 > len(self.data):
+                        continue
+                    _, _, _, _, l3_named, l3_id = struct.unpack("<IIHHHH", self.data[l3_dir_off : l3_dir_off + 16])
+                    total_l3 = l3_named + l3_id
+                    for k in range(total_l3):
+                        l3_entry_off = l3_dir_off + 16 + (k * 8)
+                        if l3_entry_off + 8 > len(self.data):
+                            break
+                        lang_id, data_leaf_off = struct.unpack("<II", self.data[l3_entry_off : l3_entry_off + 8])
+                        leaf_off = base_off + (data_leaf_off & 0x7FFFFFFF)
+                        if leaf_off + 16 > len(self.data):
+                            continue
+                        data_rva, data_sz, _, _ = struct.unpack("<IIII", self.data[leaf_off : leaf_off + 16])
+                        items.append(ResourceItem(type_id=type_id, type_name=type_name, resource_id=res_id, lang_id=lang_id, rva=data_rva, size=data_sz))
+
+                        if type_id == 24 and manifest_text is None:
+                            try:
+                                raw_file_off = self.rva_to_offset(data_rva)
+                                if raw_file_off + data_sz <= len(self.data):
+                                    raw_bytes = self.data[raw_file_off : raw_file_off + data_sz]
+                                    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+                                        raw_bytes = raw_bytes[3:]
+                                    manifest_text = raw_bytes.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
+                            except Exception:
+                                pass
+                else:
+                    leaf_off = base_off + (res_data_off & 0x7FFFFFFF)
+                    if leaf_off + 16 <= len(self.data):
+                        data_rva, data_sz, _, _ = struct.unpack("<IIII", self.data[leaf_off : leaf_off + 16])
+                        items.append(ResourceItem(type_id=type_id, type_name=type_name, resource_id=res_id, lang_id=0, rva=data_rva, size=data_sz))
+                        if type_id == 24 and manifest_text is None:
+                            try:
+                                raw_file_off = self.rva_to_offset(data_rva)
+                                if raw_file_off + data_sz <= len(self.data):
+                                    raw_bytes = self.data[raw_file_off : raw_file_off + data_sz]
+                                    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+                                        raw_bytes = raw_bytes[3:]
+                                    manifest_text = raw_bytes.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
+                            except Exception:
+                                pass
+
+        return items, manifest_text
 
     def parse_imports(self, include_delay_load: bool = True) -> List[ImportDescriptor]:
         """Parse PE import directory to extract all imported DLLs and their functions."""

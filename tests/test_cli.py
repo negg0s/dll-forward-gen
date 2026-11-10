@@ -1,4 +1,5 @@
 import io
+import os
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -161,6 +162,34 @@ class TestCli(unittest.TestCase):
             self.assertTrue(lib_out.is_file())
             content = lib_out.read_bytes()
             self.assertTrue(content.startswith(b"!<arch>\n"))
+
+
+    def test_cli_search(self):
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "-s", "GetFileVersionInfoA", "--dump-only", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("GetFileVersionInfoA", output)
+        self.assertNotIn("VerFindFileA", output)
+
+
+    def test_cli_manifest_extraction(self):
+        system_cmd = r"C:\Windows\System32\cmd.exe"
+        if not os.path.exists(system_cmd):
+            self.skipTest("cmd.exe not available")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manifest_file = Path(tmp_dir) / "cmd.manifest.xml"
+            f = io.StringIO()
+            with redirect_stdout(f):
+                exit_code = main([system_cmd, "--manifest", str(manifest_file), "--no-color"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(manifest_file.is_file())
+            content = manifest_file.read_text(encoding="utf-8")
+            self.assertIn("assembly", content)
 
 
 if __name__ == "__main__":

@@ -101,5 +101,37 @@ class TestPeParser(unittest.TestCase):
         self.assertEqual(len(info.authenticode.authenticode_sha256), 64)
 
 
+    def test_parse_resources_and_manifest(self):
+        system_cmd = r"C:\Windows\System32\cmd.exe"
+        if not os.path.exists(system_cmd):
+            self.skipTest("cmd.exe not available in System32")
+
+        parser = PeParser.from_file(system_cmd)
+        info = parser.parse()
+
+        self.assertGreater(len(info.resources), 0)
+        resource_types = {r.type_name for r in info.resources}
+        self.assertIn("RT_MANIFEST", resource_types)
+        self.assertIsNotNone(info.manifest)
+        self.assertIn("assembly", info.manifest)
+        self.assertIn("xml", info.manifest.lower())
+
+
+    def test_anti_analysis_detection(self):
+        system_cmd = r"C:\Windows\System32\cmd.exe"
+        if not os.path.exists(system_cmd):
+            self.skipTest("cmd.exe not available in System32")
+
+        parser = PeParser.from_file(system_cmd)
+        info = parser.parse()
+
+        # cmd.exe imports IsDebuggerPresent or NtQueryInformationProcess
+        self.assertGreater(len(info.anti_analysis), 0)
+        api_names = {a.api_name for a in info.anti_analysis}
+        self.assertTrue(any(name in api_names for name in ["IsDebuggerPresent", "NtQueryInformationProcess", "OutputDebugStringW"]))
+        categories = {a.category for a in info.anti_analysis}
+        self.assertIn("Anti-Debug", categories)
+
+
 if __name__ == "__main__":
     unittest.main()

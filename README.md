@@ -36,6 +36,10 @@ Writing export forwarding directives, resolving hundreds of ordinals by hand, an
 * **Embeddable Single-File Header (`-H / --header-only`):** Generate a clean `#pragma once` header containing export forwarders to directly `#include` inside an existing C/C++ project.
 * **Batch Multi-DLL Generation (`--batch config.json`):** Generate dozens of proxies across your entire toolchain from a single declarative JSON config.
 * **Target Import Audit (`--check-target <exe>`):** Scans any target `.exe` import table (IAT/INT) and cross-references it against the proxy DLL to verify 100% export coverage.
+* **Anti-Analysis & Security Heuristics Scanner:** Detects anti-debug tricks (`IsDebuggerPresent`, `CheckRemoteDebuggerPresent`, `NtQueryInformationProcess`), process injection (`VirtualProtect`, `WriteProcessMemory`, `CreateRemoteThread`), and timing evasion (`QueryPerformanceCounter`).
+* **Resource & Manifest Extraction Engine (`--manifest`):** Traverses the PE `.rsrc` directory tree, extracts XML application manifests, and clones them into the generated proxy project (`app.manifest` + `version.rc`).
+* **API Call Frequency Profiler (`-T / --trace`):** Injects lock-free atomic call counters into trampoline wrappers, dumping an aggregated `proxy_call_trace.csv` on process exit.
+* **Universal MinGW / GCC / Clang Build Scaffolding (`--gcc`):** Emits GNU Assembler (`stubs.s`), a cross-platform `Makefile`, and `build_gcc.bat` for building proxies without Visual Studio.
 * **Export Diff Engine (`--diff <other.dll>`):** Compare export tables between two DLL versions to detect added, removed, ordinal-shifted, or modified exports.
 * **Security Mitigations Audit:** Inspects and displays PE DllCharacteristics: **ASLR**, **High Entropy 64-bit VA**, **DEP/NX**, **Control Flow Guard (CFG)**, and **NoSEH**.
 * **Cryptographic Fingerprinting:** Computes SHA-256 binary hash on the fly.
@@ -306,7 +310,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 51 unit tests execute in ~0.50 seconds with zero external dependencies.
+All 57 unit tests execute in ~0.50 seconds with zero external dependencies.
 
 ---
 

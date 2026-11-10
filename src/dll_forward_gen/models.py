@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 class PeArch(str, Enum):
@@ -143,6 +143,26 @@ class SectionInfo:
 
 
 @dataclass
+class ResourceItem:
+    """Represents a resource tree leaf in the PE .rsrc directory."""
+    type_id: int
+    type_name: str
+    resource_id: Union[int, str]
+    lang_id: int
+    rva: int
+    size: int
+
+
+@dataclass
+class AntiAnalysisIndicator:
+    """Represents a detected anti-analysis, anti-debug, or memory tampering heuristic."""
+    category: str  # "Anti-Debug", "Memory-Tampering", "Process-Enumeration", "Timing-Evasion"
+    api_name: str
+    source_dll: str
+    description: str
+
+
+@dataclass
 class PeExportInfo:
     """Complete summary of a PE binary's export directory."""
     filepath: str
@@ -156,6 +176,9 @@ class PeExportInfo:
     tls_callbacks: List[int] = field(default_factory=list)
     sections: List[SectionInfo] = field(default_factory=list)
     authenticode: Optional[AuthenticodeInfo] = None
+    resources: List[ResourceItem] = field(default_factory=list)
+    manifest: Optional[str] = None
+    anti_analysis: List[AntiAnalysisIndicator] = field(default_factory=list)
 
     @property
     def named_exports(self) -> List[ExportSymbol]:
