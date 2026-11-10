@@ -12,10 +12,11 @@ class GeneratorMode(str, Enum):
     PRAGMA = "pragma"
     DEF = "def"
     TRAMPOLINE = "trampoline"
+    MASM = "masm"
 
 
 class CodeGenerator:
-    """Generates C/C++ proxy source code, .def files, CMakeLists, and build scripts."""
+    """Generates C/C++ proxy source code, MASM stubs, .def files, CMakeLists, and build scripts."""
 
     def __init__(
         self,
@@ -23,10 +24,12 @@ class CodeGenerator:
         mode: GeneratorMode = GeneratorMode.PRAGMA,
         target_dll: Optional[str] = None,
         enable_logging: bool = True,
+        enable_file_log: bool = False,
     ):
         self.info = info
         self.mode = mode
         self.enable_logging = enable_logging
+        self.enable_file_log = enable_file_log
 
         # If target DLL is not provided, default to system path: C:\Windows\System32\<dll_name>
         if target_dll:
@@ -38,7 +41,6 @@ class CodeGenerator:
     def target_stem_escaped(self) -> str:
         """Format target DLL path for C++ string literals without .dll extension for link pragmas."""
         p = Path(self.target_dll)
-        # MSVC pragma /export expects the path or module without the .dll extension
         parent_str = str(p.parent)
         stem = p.stem
         if parent_str in ("", "."):
@@ -75,7 +77,6 @@ class CodeGenerator:
 
         for sym in self.info.symbols:
             if sym.is_ordinal_only:
-                # Ordinal-only export directive
                 directive = f'#pragma comment(linker, "/export:{sym.safe_name}={target_base}.#{sym.ordinal},@{sym.ordinal},NONAME")'
             else:
                 directive = f'#pragma comment(linker, "/export:{sym.name}={target_base}.{sym.name},@{sym.ordinal}")'
@@ -87,6 +88,15 @@ class CodeGenerator:
             "static void OnProcessAttach(HMODULE hModule) {",
             "    DisableThreadLibraryCalls(hModule);",
         ])
+
+        if self.enable_file_log:
+            lines.extend([
+                '    FILE* fLog = NULL;',
+                '    if (fopen_s(&fLog, "proxy_log.txt", "a") == 0 && fLog) {',
+                f'        fprintf(fLog, "[dll-forward-gen] Attached to process: {self.info.dll_name}\\n");',
+                '        fclose(fLog);',
+                '    }',
+            ])
 
         if self.enable_logging:
             lines.extend([
@@ -152,6 +162,7 @@ class CodeGenerator:
 
     def generate_trampoline_sources(self) -> Tuple[str, str]:
         """Generate proxy.cpp and exports.def for runtime intercepting trampolines."""
+        target_escaped_w = self.target_dll.replace("\\", "\\\\")
         cpp_lines = [
             "// ===========================================================================",
             f"// Dynamic Intercepting Trampoline Proxy for {self.info.dll_name}",
@@ -170,7 +181,6 @@ class CodeGenerator:
         for sym in self.info.symbols:
             cpp_lines.append(f"static FARPROC g_pfn_{sym.safe_name} = NULL;")
 
-        target_escaped_w = self.target_dll.replace("\\", "\\\\")
         cpp_lines.extend([
             "",
             "// Real library loader and symbol resolver",
@@ -250,7 +260,6 @@ class CodeGenerator:
             "",
         ])
 
-        # Generate DEF file mapping original names to proxy_ stubs
         def_lines = [
             f'; Module Definition File for {self.info.dll_name} Trampoline Proxy',
             f'LIBRARY "{self.info.dll_name}"',
@@ -265,11 +274,166 @@ class CodeGenerator:
 
         return "\n".join(cpp_lines), "\n".join(def_lines)
 
+    def generate_masm_sources(self) -> Tuple[str, str, str]:
+        """Generate MASM assembly stubs (.asm), loader (dllmain.cpp), and exports.def.
+        
+        This generates true zero-corruption assembly JMP stubs that preserve 100% of registers,
+        stack frames, and calling convention fidelity without compiler prologue/epilogue overhead.
+        """
+        is_64 = self.info.arch in (PeArch.X64, PeArch.ARM64, PeArch.UNKNOWN)
+        ptr_type = "qword" if is_64 else "dword"
+        target_escaped_w = self.target_dll.replace("\\", "\\\\")
+
+        # 1. Generate stubs.asm
+        asm_lines = [
+            f"; ===========================================================================",
+            f"; MASM Assembly JMP Trampoline Stubs for {self.info.dll_name}",
+            f"; Architecture: {self.info.arch.value} | Ptr Size: {ptr_type}",
+            f"; Zero-overhead, zero-register corruption assembly forwarding.",
+            f"; ===========================================================================",
+        ]
+
+        if not is_64:
+            asm_lines.extend([
+                ".386",
+                ".model flat, c",
+            ])
+
+        asm_lines.extend([
+            ".code",
+            "",
+            "; --- External Function Pointer Declarations ---",
+        ])
+
+        for sym in self.info.symbols:
+            asm_lines.append(f"extern g_pfn_{sym.safe_name} : {ptr_type}")
+
+        asm_lines.extend([
+            "",
+            "; --- Direct Assembly Jump Stubs ---",
+        ])
+
+        for sym in self.info.symbols:
+            asm_lines.extend([
+                f"proxy_{sym.safe_name} proc",
+                f"    jmp {ptr_type} ptr [g_pfn_{sym.safe_name}]",
+                f"proxy_{sym.safe_name} endp",
+                "",
+            ])
+
+        asm_lines.extend([
+            "end",
+            "",
+        ])
+
+        # 2. Generate dllmain.cpp loader
+        cpp_lines = [
+            "// ===========================================================================",
+            f"// MASM DLL Loader & Function Pointer Binder for {self.info.dll_name}",
+            "// ===========================================================================",
+            "#define WIN32_LEAN_AND_MEAN",
+            "#include <windows.h>",
+            "#include <stdio.h>",
+            "",
+            "// Global handle to real loaded library",
+            "static HMODULE g_hRealDll = NULL;",
+            "",
+            "// Function pointer storage accessed by MASM assembly",
+            'extern "C" {',
+        ]
+
+        for sym in self.info.symbols:
+            cpp_lines.append(f"    FARPROC g_pfn_{sym.safe_name} = NULL;")
+
+        cpp_lines.extend([
+            "}",
+            "",
+            "// Real library loader and symbol resolver",
+            "static BOOL LoadRealLibrary() {",
+            "    if (g_hRealDll != NULL) return TRUE;",
+            "",
+            f'    const wchar_t* targetPath = L"{target_escaped_w}";',
+            "    g_hRealDll = LoadLibraryW(targetPath);",
+            "    if (!g_hRealDll) {",
+            "        wchar_t sysDir[MAX_PATH];",
+            "        if (GetSystemDirectoryW(sysDir, MAX_PATH)) {",
+            f'            wchar_t fallbackPath[MAX_PATH];',
+            f'            swprintf_s(fallbackPath, MAX_PATH, L"%s\\\\{self.info.dll_name}", sysDir);',
+            "            g_hRealDll = LoadLibraryW(fallbackPath);",
+            "        }",
+            "    }",
+            "",
+            "    if (!g_hRealDll) {",
+            f'        OutputDebugStringA("[FATAL] Failed to load real {self.info.dll_name}\\n");',
+            "        return FALSE;",
+            "    }",
+            "",
+            "    // Bind all original function pointers",
+        ])
+
+        for sym in self.info.symbols:
+            if sym.is_ordinal_only:
+                lookup_expr = f"MAKEINTRESOURCEA({sym.ordinal})"
+            else:
+                lookup_expr = f'"{sym.name}"'
+            cpp_lines.append(f"    g_pfn_{sym.safe_name} = GetProcAddress(g_hRealDll, {lookup_expr});")
+
+        cpp_lines.extend([
+            "",
+            "    return TRUE;",
+            "}",
+            "",
+            "BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {",
+            "    (void)lpReserved;",
+            "    switch (ul_reason_for_call) {",
+            "    case DLL_PROCESS_ATTACH:",
+            "        DisableThreadLibraryCalls(hModule);",
+            "        LoadRealLibrary();",
+        ])
+
+        if self.enable_file_log:
+            cpp_lines.extend([
+                '        FILE* f = NULL;',
+                '        if (fopen_s(&f, "proxy_log.txt", "a") == 0 && f) {',
+                f'            fprintf(f, "[MASM PROXY] Attached: {self.info.dll_name}\\n");',
+                '            fclose(f);',
+                '        }',
+            ])
+
+        cpp_lines.extend([
+            "        break;",
+            "    case DLL_PROCESS_DETACH:",
+            "        if (g_hRealDll) {",
+            "            FreeLibrary(g_hRealDll);",
+            "            g_hRealDll = NULL;",
+            "        }",
+            "        break;",
+            "    }",
+            "    return TRUE;",
+            "}",
+            "",
+        ])
+
+        # 3. Generate exports.def
+        def_lines = [
+            f'; Module Definition File for {self.info.dll_name} MASM Proxy',
+            f'LIBRARY "{self.info.dll_name}"',
+            'EXPORTS',
+        ]
+        for sym in self.info.symbols:
+            if sym.is_ordinal_only:
+                def_lines.append(f"    {sym.safe_name}=proxy_{sym.safe_name} @{sym.ordinal} NONAME")
+            else:
+                def_lines.append(f"    {sym.name}=proxy_{sym.safe_name} @{sym.ordinal}")
+        def_lines.append("")
+
+        return "\n".join(asm_lines), "\n".join(cpp_lines), "\n".join(def_lines)
+
     def generate_cmake(self, project_name: str) -> str:
         """Generate CMakeLists.txt for compiling the proxy DLL."""
         target_name = Path(self.info.dll_name).stem
         return f"""cmake_minimum_required(VERSION 3.20)
-project({project_name} LANGUAGES CXX C)
+project({project_name} LANGUAGES CXX C ASM_MASM)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -278,9 +442,12 @@ if (MSVC)
     add_compile_options(/W4 /permissive-)
 endif()
 
-add_library({target_name} SHARED
-    dllmain.cpp
-)
+set(SOURCES dllmain.cpp)
+if (EXISTS "${{CMAKE_CURRENT_SOURCE_DIR}}/stubs.asm")
+    list(APPEND SOURCES stubs.asm)
+endif()
+
+add_library({target_name} SHARED ${{SOURCES}})
 
 set_target_properties({target_name} PROPERTIES
     OUTPUT_NAME "{target_name}"
@@ -296,8 +463,12 @@ endif()
 """
 
     def generate_build_bat(self, project_name: str) -> str:
-        """Generate build.bat for one-click compilation using MSVC cl.exe."""
+        """Generate build.bat for one-click compilation using MSVC cl.exe and MASM."""
         target_name = Path(self.info.dll_name).stem
+        is_64 = self.info.arch in (PeArch.X64, PeArch.ARM64, PeArch.UNKNOWN)
+        asm_tool = "ml64.exe" if is_64 else "ml.exe"
+        arch_flag = "X64" if is_64 else "X86"
+
         return f"""@echo off
 setlocal enabledelayedexpansion
 
@@ -306,17 +477,26 @@ echo [dll-forward-gen] Building {self.info.dll_name} proxy ({self.info.arch.valu
 where cl.exe >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] MSVC cl.exe not found in PATH!
-    echo Please run this from a Visual Studio Developer Command Prompt (x64/x86).
+    echo Please run this from a Visual Studio Developer Command Prompt ({self.info.arch.value}).
     exit /b 1
 )
 
 if not exist build mkdir build
 pushd build
 
-if exist ..\\exports.def (
-    cl.exe /nologo /O2 /W4 /LD ..\\dllmain.cpp /DEF:..\\exports.def /Fe:{target_name}.dll /link /MACHINE:{self.info.arch.value.upper()}
+if exist ..\\stubs.asm (
+    echo [dll-forward-gen] Assembling stubs.asm with {asm_tool}...
+    {asm_tool} /c /nologo /Fo:stubs.obj ..\\stubs.asm
+    if %ERRORLEVEL% NEQ 0 (
+        echo [ERROR] MASM assembly failed!
+        popd
+        exit /b 1
+    )
+    cl.exe /nologo /O2 /W4 /LD ..\\dllmain.cpp stubs.obj /DEF:..\\exports.def /Fe:{target_name}.dll /link /MACHINE:{arch_flag}
+) else if exist ..\\exports.def (
+    cl.exe /nologo /O2 /W4 /LD ..\\dllmain.cpp /DEF:..\\exports.def /Fe:{target_name}.dll /link /MACHINE:{arch_flag}
 ) else (
-    cl.exe /nologo /O2 /W4 /LD ..\\dllmain.cpp /Fe:{target_name}.dll /link /MACHINE:{self.info.arch.value.upper()}
+    cl.exe /nologo /O2 /W4 /LD ..\\dllmain.cpp /Fe:{target_name}.dll /link /MACHINE:{arch_flag}
 )
 
 if %ERRORLEVEL% EQU 0 (
@@ -355,6 +535,20 @@ endlocal
 
         elif self.mode == GeneratorMode.TRAMPOLINE:
             cpp_src, def_src = self.generate_trampoline_sources()
+            main_path = out_dir / "dllmain.cpp"
+            main_path.write_text(cpp_src, encoding="utf-8")
+            created.append(main_path)
+
+            def_path = out_dir / "exports.def"
+            def_path.write_text(def_src, encoding="utf-8")
+            created.append(def_path)
+
+        elif self.mode == GeneratorMode.MASM:
+            asm_src, cpp_src, def_src = self.generate_masm_sources()
+            asm_path = out_dir / "stubs.asm"
+            asm_path.write_text(asm_src, encoding="utf-8")
+            created.append(asm_path)
+
             main_path = out_dir / "dllmain.cpp"
             main_path.write_text(cpp_src, encoding="utf-8")
             created.append(main_path)
