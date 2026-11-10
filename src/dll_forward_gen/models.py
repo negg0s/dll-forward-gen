@@ -49,6 +49,33 @@ class PeMitigations:
         return flags
 
 
+@dataclass
+class AuthenticodeInfo:
+    """Authenticode digital signature information."""
+    is_signed: bool
+    cert_offset: int = 0
+    cert_size: int = 0
+    revision: int = 0
+    cert_type: int = 0
+    authenticode_sha256: str = ""
+
+    @property
+    def revision_str(self) -> str:
+        if self.revision == 0x0200:
+            return "WIN_CERT_REVISION_2_0"
+        if self.revision == 0x0100:
+            return "WIN_CERT_REVISION_1_0"
+        return f"0x{self.revision:04X}"
+
+    @property
+    def type_str(self) -> str:
+        if self.cert_type == 0x0002:
+            return "PKCS#7 SignedData"
+        if self.cert_type == 0x0001:
+            return "X.509"
+        return f"0x{self.cert_type:04X}"
+
+
 @dataclass(frozen=True)
 class ExportSymbol:
     """Represents a single exported symbol in a PE file."""
@@ -128,6 +155,7 @@ class PeExportInfo:
     mitigations: Optional[PeMitigations] = None
     tls_callbacks: List[int] = field(default_factory=list)
     sections: List[SectionInfo] = field(default_factory=list)
+    authenticode: Optional[AuthenticodeInfo] = None
 
     @property
     def named_exports(self) -> List[ExportSymbol]:

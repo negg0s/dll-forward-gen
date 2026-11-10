@@ -217,6 +217,23 @@ dll_forward_gen::stealth::WipeHeaders(hProxyModule);
 dll_forward_gen::stealth::HideFromDebugger();
 ```
 
+### In-Memory Manual PE Mapping Engine (`sdk/pe_loader.hpp`)
+```cpp
+#include "sdk/pe_loader.hpp"
+
+// Manually map any PE binary in-memory without calling LoadLibrary (stealth module loading):
+std::vector<uint8_t> dllBytes = ReadPayloadFile("payload.dll");
+dll_forward_gen::loader::ManualPE module;
+
+if (module.LoadFromMemory(dllBytes.data(), dllBytes.size())) {
+    // Resolve exported functions directly from the manually mapped image:
+    auto pfnInit = (void(*)())module.GetProcAddressManual("InitializePlugin");
+    if (pfnInit) pfnInit();
+
+    module.FreeManual();
+}
+```
+
 ### Length Disassembler Engine (`sdk/lde.hpp`)
 ```cpp
 #include "sdk/lde.hpp"
@@ -289,7 +306,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 50 unit tests execute in ~0.20 seconds with zero external dependencies.
+All 51 unit tests execute in ~0.50 seconds with zero external dependencies.
 
 ---
 

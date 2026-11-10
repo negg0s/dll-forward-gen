@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from .models import ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExportInfo, PeMitigations, SectionInfo
+from .models import AuthenticodeInfo, ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExportInfo, PeMitigations, SectionInfo
 from .known_ordinals import lookup_known_ordinal
 
 
@@ -181,6 +181,8 @@ class PeParser:
         else:
             raise PeParseError(f"Unsupported Optional Header magic: 0x{self.opt_magic:04X}")
 
+        self.opt_hdr_offset = opt_hdr_offset
+        self.security_dir_offset = self.export_dir_offset + (4 * 8)
         self.tls_dir_offset = self.export_dir_offset + (9 * 8)
         self.delay_dir_offset = self.export_dir_offset + (13 * 8)
 
@@ -348,6 +350,35 @@ class PeParser:
                                         tls_callbacks.append(func_va - self.image_base)
                                     curr_cb += ptr_size
 
+        # Extract Authenticode digital signature if present
+        authenticode = None
+        if hasattr(self, "security_dir_offset") and self.security_dir_offset + 8 <= len(self.data):
+            cert_off = self._read_u32(self.security_dir_offset)
+            cert_size = self._read_u32(self.security_dir_offset + 4)
+            if cert_off != 0 and cert_size >= 8 and cert_off + cert_size <= len(self.data):
+                dwLen, wRev, wType = struct.unpack("<IHH", self.data[cert_off : cert_off + 8])
+                # Calculate Authenticode SHA-256 digest
+                h = hashlib.sha256()
+                checksum_off = self.opt_hdr_offset + 64
+                sec_dir_off = self.security_dir_offset
+
+                h.update(self.data[:checksum_off])
+                h.update(self.data[checksum_off + 4 : sec_dir_off])
+                h.update(self.data[sec_dir_off + 8 : cert_off])
+                if cert_off + cert_size < len(self.data):
+                    h.update(self.data[cert_off + cert_size:])
+
+                authenticode = AuthenticodeInfo(
+                    is_signed=True,
+                    cert_offset=cert_off,
+                    cert_size=cert_size,
+                    revision=wRev,
+                    cert_type=wType,
+                    authenticode_sha256=h.hexdigest(),
+                )
+            else:
+                authenticode = AuthenticodeInfo(is_signed=False)
+
         return PeExportInfo(
             filepath=self.filepath,
             dll_name=dll_name,
@@ -359,6 +390,7 @@ class PeParser:
             mitigations=self.mitigations,
             tls_callbacks=tls_callbacks,
             sections=self.section_infos,
+            authenticode=authenticode,
         )
 
     def parse_imports(self, include_delay_load: bool = True) -> List[ImportDescriptor]:

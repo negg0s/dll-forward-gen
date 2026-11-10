@@ -85,5 +85,21 @@ class TestPeParser(unittest.TestCase):
         self.assertLess(text_sec.entropy, 7.5)
 
 
+    def test_parse_authenticode_signature(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        info = parser.parse()
+
+        self.assertIsNotNone(info.authenticode)
+        self.assertTrue(info.authenticode.is_signed)
+        self.assertGreater(info.authenticode.cert_size, 0)
+        self.assertEqual(info.authenticode.cert_type, 0x0002)
+        self.assertEqual(info.authenticode.revision, 0x0200)
+        self.assertEqual(len(info.authenticode.authenticode_sha256), 64)
+
+
 if __name__ == "__main__":
     unittest.main()

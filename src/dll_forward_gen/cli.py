@@ -68,6 +68,10 @@ def format_table(
         f" {c_bld}File Path:{c_rst}       {c_dim}{info.filepath}{c_rst}",
         f" {c_bld}Architecture:{c_rst}    {c_wht}{info.arch.value.upper()}{c_rst}",
         f" {c_bld}SHA-256:{c_rst}         {c_dim}{info.sha256[:32]}...{c_rst}",
+        f" {c_bld}Authenticode:{c_rst}    " + (
+            f"{c_grn}[SIGNED]{c_rst} {info.authenticode.type_str} ({info.authenticode.cert_size:,} bytes)"
+            if info.authenticode and info.authenticode.is_signed else f"{c_dim}[UNSIGNED]{c_rst}"
+        ),
         f" {c_bld}Mitigations:{c_rst}     {c_mag}{mitigations_str}{c_rst}",
         f" {c_bld}TLS Callbacks:{c_rst}   {c_ylw}{len(info.tls_callbacks)}{c_rst}" + (f" ({', '.join(f'0x{cb:08X}' for cb in info.tls_callbacks)})" if info.tls_callbacks else ""),
         f" {c_bld}Ordinal Base:{c_rst}    {info.ordinal_base}",
@@ -204,6 +208,13 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
         "ordinal_only_count": len(info.ordinal_only_exports),
         "forwarded_count": len(info.forwarded_exports),
         "tls_callbacks": [f"0x{cb:08X}" for cb in info.tls_callbacks],
+        "authenticode": {
+            "is_signed": info.authenticode.is_signed,
+            "cert_size": info.authenticode.cert_size,
+            "revision": info.authenticode.revision_str,
+            "cert_type": info.authenticode.type_str,
+            "authenticode_sha256": info.authenticode.authenticode_sha256,
+        } if info.authenticode else None,
         "sections": [
             {
                 "name": sec.name,
