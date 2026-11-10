@@ -95,3 +95,30 @@
   - [x] Step 1: Add `.github/workflows/ci.yml` running unit tests and MSVC builds on Windows runner.
   - [x] Step 2: Update `README.md` with diffing, hook generation, and target verification examples.
   - [x] Step 3: Run full test suite, purge temp files, and commit.
+
+### Phase 4: Full Modding & Instrumentation SDK
+- [ ] Task 16: Zero-Dependency Native x64/x86 Inline Hooking Engine (`sdk/inline_hook.hpp`)
+  - [ ] Step 1: Write header-only inline hooking engine with atomic byte patching and trampoline generation.
+  - [ ] Step 2: Write unit test in C++ verifying memory patching and hook execution.
+  - [ ] Step 3: Integrate with proxy generator template when `--inline-hook` is requested.
+  - [ ] Step 4: Run tests and commit.
+
+- [ ] Task 17: High-Performance Memory Pattern Scanner (`sdk/pattern_scan.hpp`)
+  - [ ] Step 1: Implement IDA-style byte pattern scanner (`48 89 5C ? ? 48 83 EC`) across PE sections.
+  - [ ] Step 2: Write test verifying pattern detection in memory buffers.
+  - [ ] Step 3: Commit.
+
+- [ ] Task 18: Embeddable Single-File Header-Only Forwarder (`--header-only`)
+  - [ ] Step 1: Add `--header-only` option in `generator.py` and `cli.py` generating `<dll>_forward.h`.
+  - [ ] Step 2: Write unit tests in `tests/test_header_only.py`.
+  - [ ] Step 3: Commit.
+
+- [ ] Task 19: Batch Proxy Generation (`--batch <config.json>`)
+  - [ ] Step 1: Implement batch schema and runner in `src/dll_forward_gen/batch.py`.
+  - [ ] Step 2: Write unit tests in `tests/test_batch.py`.
+  - [ ] Step 3: Add CLI support and commit.
+
+- [ ] Task 20: Full Verification, Documentation Overhaul, & Final C: Cleanup
+  - [ ] Step 1: Run complete 40+ unit test suite.
+  - [ ] Step 2: Update `README.md` with SDK guides and code snippets.
+  - [ ] Step 3: Clean temporary cache on drive C: and final git commit.
