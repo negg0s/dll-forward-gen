@@ -67,6 +67,8 @@ jobs:
         test_reloc.exe
         cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_api_hash.cpp /Fe:test_api_hash.exe
         test_api_hash.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_syscall.cpp /Fe:test_syscall.exe
+        test_syscall.exe
 
     - name: End-to-End MASM Compilation Check
       shell: cmd

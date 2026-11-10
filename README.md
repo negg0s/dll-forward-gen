@@ -149,14 +149,28 @@ extern "C" void* __stdcall Hook_D3D11CreateDevice() {
 }
 ```
 
-### 5. Generate Embeddable Single-File Header (`-H`)
+### 7. Dependency & Forwarding Graph Visualizer (`--tree` / `--deps`)
+Visualize the entire direct import chain, delay-loaded libraries, and forwarded export targets:
+
+```bash
+python -m dll_forward_gen version.dll --tree
+```
+
+### 8. Early-Execution TLS Callback Injection (`--tls-callback`)
+Scaffold `.CRT$XLB` pre-entrypoint TLS callbacks that execute before `DllMain` and before the main thread starts:
+
+```bash
+python -m dll_forward_gen dinput8.dll -o ./mod_proxy -m masm --tls-callback
+```
+
+### 9. Generate Embeddable Single-File Header (`-H`)
 Drop forwarding pragmas directly into your existing C/C++ solution without creating new projects:
 
 ```bash
 python -m dll_forward_gen version.dll -H -o ./my_project/version_forward.h
 ```
 
-### 6. Batch Multi-DLL Generation (`--batch`)
+### 10. Batch Multi-DLL Generation (`--batch`)
 Configure multiple proxies in a single JSON file:
 
 ```json
@@ -311,6 +325,17 @@ FARPROC pfnCreateFile = dll_forward_gen::crypto::ApiHash::GetProcAddressByHash(
 );
 ```
 
+### Dynamic Syscall Resolver & Indirect Syscalls (`sdk/syscall.hpp`)
+```cpp
+#include "sdk/syscall.hpp"
+
+// Resolve genuine System Service Numbers (SSN) using Hell's Gate / Halo's Gate (bypasses EDR hooks):
+int32_t ssnAlloc = dll_forward_gen::syscall::SyscallResolver::GetSyscallNumber("NtAllocateVirtualMemory");
+
+// Locate in-ntdll "syscall; ret" gadget for indirect syscall execution (clean kernel RIP return):
+const void* pGadget = dll_forward_gen::syscall::SyscallResolver::GetSyscallGadget();
+```
+
 ### Length Disassembler Engine (`sdk/lde.hpp`)
 ```cpp
 #include "sdk/lde.hpp"
@@ -383,7 +408,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 67 unit tests execute in ~0.50 seconds with zero external dependencies.
+All 69 unit tests execute in ~0.60 seconds with zero external dependencies.
 
 ---
 

@@ -152,7 +152,7 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             exported_files = list(Path(tmp_dir).glob("*.hpp"))
-            self.assertGreaterEqual(len(exported_files), 11)
+            self.assertGreaterEqual(len(exported_files), 12)
             file_names = {p.name for p in exported_files}
             self.assertIn("inline_hook.hpp", file_names)
             self.assertIn("pattern_scan.hpp", file_names)
@@ -165,6 +165,33 @@ class TestCli(unittest.TestCase):
             self.assertIn("iat_resolver.hpp", file_names)
             self.assertIn("reloc.hpp", file_names)
             self.assertIn("api_hash.hpp", file_names)
+            self.assertIn("syscall.hpp", file_names)
+
+    def test_cli_tree_output(self):
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "--tree", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("DEPENDENCY & FORWARDING GRAPH", output)
+        self.assertIn("Direct Imports", output)
+        self.assertIn("Forwarded Export Targets", output)
+
+    def test_cli_tls_callback_generation(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_dir = Path(tmp_dir) / "tls_proxy"
+            exit_code = main([
+                "version.dll",
+                "-o", str(out_dir),
+                "-m", "pragma",
+                "--tls-callback",
+                "--no-color",
+            ])
+            self.assertEqual(exit_code, 0)
+            cpp_content = (out_dir / "dllmain.cpp").read_text(encoding="utf-8")
+            self.assertIn(".CRT$XLB", cpp_content)
+            self.assertIn("OnProxyTlsCallback", cpp_content)
 
 
     def test_cli_generate_lib(self):

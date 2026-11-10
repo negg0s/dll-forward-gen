@@ -8,14 +8,14 @@ import shutil
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from . import __version__
 from .batch import run_batch_config
 from .diff import diff_export_tables
 from .generator import CodeGenerator, GeneratorMode
 from .lib_generator import ImportLibGenerator
-from .models import ExportSymbol, PeExportInfo
+from .models import ExportSymbol, ImportDescriptor, PeExportInfo
 from .pe_parser import PeParser, PeParseError, resolve_dll_path
 
 # ANSI color codes for Windows 10/11 Terminal
@@ -250,6 +250,93 @@ def audit_target_imports(info: PeExportInfo, target_exe: Path, use_color: bool =
     return "\n".join(lines)
 
 
+def format_dependency_tree(
+    info: PeExportInfo,
+    imports: List[ImportDescriptor],
+    use_color: bool = True,
+) -> str:
+    """Format DLL imports and forwarded export targets into an ASCII dependency tree."""
+    c_rst = COLOR_RESET if use_color else ""
+    c_bld = COLOR_BOLD if use_color else ""
+    c_cyn = COLOR_CYAN if use_color else ""
+    c_grn = COLOR_GREEN if use_color else ""
+    c_dim = COLOR_DIM if use_color else ""
+    c_wht = COLOR_WHITE if use_color else ""
+
+    direct_imports = [d for d in imports if not d.is_delay_loaded]
+    delay_imports = [d for d in imports if d.is_delay_loaded]
+
+    forwarded_by_dll: Dict[str, List[str]] = {}
+    for s in info.symbols:
+        if s.is_forwarded and s.forward_name:
+            parts = s.forward_name.split(".", 1)
+            fwd_dll = f"{parts[0]}.dll" if not parts[0].lower().endswith(".dll") else parts[0]
+            fwd_func = parts[1] if len(parts) > 1 else s.name or f"Ordinal_{s.ordinal}"
+            forwarded_by_dll.setdefault(fwd_dll, []).append(fwd_func)
+
+    lines = [
+        "",
+        f"{c_cyn}{'=' * 82}{c_rst}",
+        f" {c_bld}DEPENDENCY & FORWARDING GRAPH: {info.dll_name} ({info.arch.value.upper()}){c_rst}",
+        f"{c_cyn}{'=' * 82}{c_rst}",
+        f" {c_bld}{info.dll_name}{c_rst}",
+    ]
+
+    categories = []
+    if direct_imports:
+        categories.append(("Direct Imports", direct_imports, "import"))
+    if delay_imports:
+        categories.append(("Delay-Loaded Imports", delay_imports, "delay"))
+    if forwarded_by_dll:
+        categories.append(("Forwarded Export Targets", forwarded_by_dll, "forward"))
+
+    if not categories:
+        lines.append(f"  {c_dim}(No external imports or forwarded export targets){c_rst}")
+        lines.append(f"{c_cyn}{'=' * 82}{c_rst}")
+        return "\n".join(lines)
+
+    for cat_idx, (cat_name, cat_data, cat_kind) in enumerate(categories):
+        is_last_cat = (cat_idx == len(categories) - 1)
+        cat_branch = "└──" if is_last_cat else "├──"
+        cat_prefix = "    " if is_last_cat else "│   "
+
+        if cat_kind in ("import", "delay"):
+            desc_list = cat_data
+            tot_syms = sum(len(d.symbols) for d in desc_list)
+            lines.append(f" {cat_branch} {c_bld}{cat_name}{c_rst} {c_dim}({len(desc_list)} DLLs, {tot_syms} symbols){c_rst}")
+            for d_idx, desc in enumerate(desc_list):
+                is_last_d = (d_idx == len(desc_list) - 1)
+                d_branch = "└──" if is_last_d else "├──"
+                d_prefix = cat_prefix + ("    " if is_last_d else "│   ")
+                lines.append(f" {cat_prefix}{d_branch} {c_wht}{desc.dll_name}{c_rst} {c_dim}[{len(desc.symbols)} symbols]{c_rst}")
+                for s_idx, sym in enumerate(desc.symbols[:5]):
+                    is_last_s = (s_idx == min(len(desc.symbols), 5) - 1) and len(desc.symbols) <= 5
+                    s_branch = "└──" if is_last_s else "├──"
+                    sym_name = sym.name if sym.name else f"<Ordinal_{sym.ordinal}>"
+                    lines.append(f" {d_prefix}{s_branch} {c_dim}{sym_name}{c_rst}")
+                if len(desc.symbols) > 5:
+                    lines.append(f" {d_prefix}└── {c_dim}... and {len(desc.symbols) - 5} more{c_rst}")
+        else:
+            fwd_dict = cat_data
+            tot_syms = sum(len(syms) for syms in fwd_dict.values())
+            lines.append(f" {cat_branch} {c_bld}{cat_name}{c_rst} {c_dim}({len(fwd_dict)} target DLLs, {tot_syms} symbols){c_rst}")
+            dll_items = list(fwd_dict.items())
+            for d_idx, (dll, sym_list) in enumerate(dll_items):
+                is_last_d = (d_idx == len(dll_items) - 1)
+                d_branch = "└──" if is_last_d else "├──"
+                d_prefix = cat_prefix + ("    " if is_last_d else "│   ")
+                lines.append(f" {cat_prefix}{d_branch} {c_grn}{dll}{c_rst} {c_dim}[{len(sym_list)} forwarded]{c_rst}")
+                for s_idx, sym_name in enumerate(sym_list[:5]):
+                    is_last_s = (s_idx == min(len(sym_list), 5) - 1) and len(sym_list) <= 5
+                    s_branch = "└──" if is_last_s else "├──"
+                    lines.append(f" {d_prefix}{s_branch} {c_dim}{sym_name}{c_rst}")
+                if len(sym_list) > 5:
+                    lines.append(f" {d_prefix}└── {c_dim}... and {len(sym_list) - 5} more{c_rst}")
+
+    lines.append(f"{c_cyn}{'=' * 82}{c_rst}")
+    return "\n".join(lines)
+
+
 def export_info_to_dict(info: PeExportInfo) -> dict:
     """Serialize PeExportInfo to a JSON-serializable dictionary."""
     return {
@@ -480,6 +567,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Generate a standalone embeddable C/C++ forwarding header (.h) instead of a full project",
     )
     parser.add_argument(
+        "-D",
+        "--deps",
+        "--tree",
+        dest="tree",
+        action="store_true",
+        help="Display ASCII dependency tree of direct imports, delay imports, and forwarded targets",
+    )
+    parser.add_argument(
+        "--tls-callback",
+        action="store_true",
+        help="Scaffold .CRT$XLB early-execution TLS callback in generated proxy dllmain.cpp",
+    )
+    parser.add_argument(
         "-L",
         "--lib",
         type=Path,
@@ -623,6 +723,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"{c_red}[ERROR] Disassembly preview: {e}{c_rst}", file=sys.stderr)
             return 1
 
+    if args.tree:
+        imports = parser.parse_imports()
+        print(format_dependency_tree(info, imports, use_color=use_color))
+        if not args.output_dir and not args.dump_only:
+            return 0
+
     filter_query = args.filter or args.search
 
     if args.manifest is not None:
@@ -702,6 +808,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         hooked_symbols=args.hook,
         enable_gcc=args.gcc,
         enable_trace=args.trace,
+        enable_tls_callback=args.tls_callback,
     )
 
     created_files = gen.emit_project(out_dir)

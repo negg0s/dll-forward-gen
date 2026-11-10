@@ -30,6 +30,7 @@ class CodeGenerator:
         generate_lib: bool = True,
         enable_gcc: bool = False,
         enable_trace: bool = False,
+        enable_tls_callback: bool = False,
     ):
         self.info = info
         self.mode = mode
@@ -39,6 +40,7 @@ class CodeGenerator:
         self.generate_lib = generate_lib
         self.enable_gcc = enable_gcc
         self.enable_trace = enable_trace
+        self.enable_tls_callback = enable_tls_callback
 
         # If target DLL is not provided, default to system path: C:\Windows\System32\<dll_name>
         if target_dll:
@@ -129,6 +131,28 @@ class CodeGenerator:
         lines.extend([
             "}",
             "",
+        ])
+
+        if self.enable_tls_callback:
+            lines.extend([
+                "// --- Early Execution TLS Callback (Executes BEFORE DllMain) ---",
+                "static void NTAPI OnProxyTlsCallback(PVOID DllHandle, DWORD Reason, PVOID Reserved) {",
+                "    (void)DllHandle; (void)Reserved;",
+                "    if (Reason == DLL_PROCESS_ATTACH) {",
+                f'        OutputDebugStringA("[dll-forward-gen] TLS Callback triggered for {self.info.dll_name}\\n");',
+                "    }",
+                "}",
+                "",
+                "#if defined(_MSC_VER)",
+                '    #pragma section(".CRT$XLB", read)',
+                '    __declspec(allocate(".CRT$XLB")) const PIMAGE_TLS_CALLBACK g_pProxyTlsCallback = OnProxyTlsCallback;',
+                "#elif defined(__GNUC__) || defined(__clang__)",
+                '    __attribute__((section(".CRT$XLB"))) const PIMAGE_TLS_CALLBACK g_pProxyTlsCallback = OnProxyTlsCallback;',
+                "#endif",
+                "",
+            ])
+
+        lines.extend([
             "BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {",
             "    (void)lpReserved;",
             "    switch (ul_reason_for_call) {",
