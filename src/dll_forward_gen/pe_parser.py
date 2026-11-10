@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from .models import ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExportInfo, PeMitigations
+from .known_ordinals import lookup_known_ordinal
 
 
 class PeParseError(Exception):
@@ -273,6 +274,7 @@ class PeParser:
                         fwd_str = self._read_asciiz(fwd_offset)
 
                 demangled = demangle_symbol(name) if name else None
+                known = lookup_known_ordinal(dll_name, ordinal) if name is None else None
 
                 symbols.append(
                     ExportSymbol(
@@ -282,6 +284,7 @@ class PeParser:
                         is_forwarded=is_fwd,
                         forward_name=fwd_str,
                         demangled_name=demangled,
+                        known_name=known,
                     )
                 )
 

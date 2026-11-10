@@ -207,6 +207,41 @@ dll_forward_gen::hook::HardwareBreakpointHook::Instance().Install(
 );
 ```
 
+### Memory Cloaking & PEB Unlinking (`sdk/stealth.hpp`)
+```cpp
+#include "sdk/stealth.hpp"
+
+// Hide proxy DLL from EnumProcessModules, CreateToolhelp32Snapshot, and debuggers:
+dll_forward_gen::stealth::UnlinkFromPEB(hProxyModule);
+dll_forward_gen::stealth::WipeHeaders(hProxyModule);
+dll_forward_gen::stealth::HideFromDebugger();
+```
+
+---
+
+## 📦 Zero-Dependency COFF Import Library Generator (`.lib`)
+
+`dll-forward-gen` includes an internal pure-Python COFF Short Import Library builder. You don't need MSVC `lib.exe` installed to create `.lib` files!
+
+```bash
+# Generate standalone .lib import library directly:
+python -m dll_forward_gen version.dll --lib ./my_libs/version.lib
+```
+
+All generated proxy projects also automatically include the corresponding `.lib` import library ready for immediate linking.
+
+---
+
+## 📖 Known Ordinals Database
+
+Game and system DLLs often export functions strictly by ordinal (`@1`, `@2`, etc.). `dll-forward-gen` includes a built-in ordinal database:
+- **`ws2_32.dll` / `wsock32.dll`**: Winsock 1.1 / 2.0 API mappings (`accept`, `connect`, `socket`, `WSAStartup`...)
+- **`oleaut32.dll`**: OLE Automation API mappings (`SysAllocString`, `VariantInit`...)
+- **`xlive.dll`**: Games for Windows Live modding APIs (`XLiveInitialize`, `XLiveInput`...)
+- **`binkw32.dll` / `bink2w64.dll`**: RAD Game Tools video APIs (`BinkOpen`, `BinkDoFrame`...)
+
+When inspecting DLLs with `--dump` or generating proxies, ordinal exports are automatically annotated with their canonical names.
+
 ---
 
 ## ⚡ Native C++20 Standalone CLI (`cpp/`)
@@ -243,7 +278,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 39 unit tests execute in ~0.16 seconds with zero external dependencies.
+All 48 unit tests execute in ~0.18 seconds with zero external dependencies.
 
 ---
 

@@ -13,6 +13,7 @@ from . import __version__
 from .batch import run_batch_config
 from .diff import diff_export_tables
 from .generator import CodeGenerator, GeneratorMode
+from .lib_generator import ImportLibGenerator
 from .models import ExportSymbol, PeExportInfo
 from .pe_parser import PeParser, PeParseError, resolve_dll_path
 
@@ -93,7 +94,8 @@ def format_table(
             target_str = f"{sym.name or '<ordinal>'} {c_dim}->{c_rst} {c_grn}{sym.forward_name}{c_rst}"
         elif sym.is_ordinal_only:
             type_str = f"{c_ylw}[ORDINAL-ONLY]{c_rst}"
-            target_str = f"{c_ylw}<Ordinal_{sym.ordinal}>{c_rst}"
+            known_str = f" {c_dim}(known: {sym.known_name}){c_rst}" if sym.known_name else ""
+            target_str = f"{c_ylw}<Ordinal_{sym.ordinal}>{c_rst}{known_str}"
         else:
             type_str = f"{c_cyn}[FUNCTION]{c_rst}"
             target_str = f"{c_wht}{sym.name}{c_rst}" if sym.name else ""
@@ -300,6 +302,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Generate a standalone embeddable C/C++ forwarding header (.h) instead of a full project",
     )
     parser.add_argument(
+        "-L",
+        "--lib",
+        type=Path,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Generate standalone COFF import library (.lib) for linking against this DLL",
+    )
+    parser.add_argument(
         "--dump-only",
         action="store_true",
         help="Print export directory details and exit without generating files",
@@ -422,6 +433,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.suffix:
         stem = Path(info.dll_name).stem
         target_dll = f"{stem}{args.suffix}.dll"
+
+    if args.lib:
+        lib_path = Path(args.lib) if isinstance(args.lib, Path) else Path(f"{Path(info.dll_name).stem}.lib")
+        lib_gen = ImportLibGenerator(info)
+        lib_gen.write_lib(lib_path)
+        c_grn = COLOR_GREEN if use_color else ""
+        c_rst = COLOR_RESET if use_color else ""
+        print(f"\n{c_grn}[+] Generated COFF import library: {lib_path.resolve()}{c_rst}")
+        if not args.output_dir:
+            return 0
 
     if args.header_only:
         gen = CodeGenerator(

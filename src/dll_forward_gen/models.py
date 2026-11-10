@@ -58,6 +58,7 @@ class ExportSymbol:
     is_forwarded: bool = False
     forward_name: Optional[str] = None
     demangled_name: Optional[str] = None
+    known_name: Optional[str] = None
 
     @property
     def is_ordinal_only(self) -> bool:

@@ -136,13 +136,27 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             exported_files = list(Path(tmp_dir).glob("*.hpp"))
-            self.assertGreaterEqual(len(exported_files), 5)
+            self.assertGreaterEqual(len(exported_files), 6)
             file_names = {p.name for p in exported_files}
             self.assertIn("inline_hook.hpp", file_names)
             self.assertIn("pattern_scan.hpp", file_names)
             self.assertIn("iat_hook.hpp", file_names)
             self.assertIn("eat_hook.hpp", file_names)
             self.assertIn("veh_hook.hpp", file_names)
+            self.assertIn("stealth.hpp", file_names)
+
+
+    def test_cli_generate_lib(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lib_out = Path(tmp_dir) / "version_test.lib"
+            f = io.StringIO()
+            with redirect_stdout(f):
+                exit_code = main(["version.dll", "--lib", str(lib_out)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(lib_out.is_file())
+            content = lib_out.read_bytes()
+            self.assertTrue(content.startswith(b"!<arch>\n"))
 
 
 if __name__ == "__main__":

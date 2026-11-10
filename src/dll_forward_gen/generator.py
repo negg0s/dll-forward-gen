@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .models import PeArch, PeExportInfo
+from .lib_generator import ImportLibGenerator
 
 
 class GeneratorMode(str, Enum):
@@ -26,12 +27,14 @@ class CodeGenerator:
         enable_logging: bool = True,
         enable_file_log: bool = False,
         hooked_symbols: Optional[List[str]] = None,
+        generate_lib: bool = True,
     ):
         self.info = info
         self.mode = mode
         self.enable_logging = enable_logging
         self.enable_file_log = enable_file_log
         self.hooked_symbols = set(hooked_symbols or [])
+        self.generate_lib = generate_lib
 
         # If target DLL is not provided, default to system path: C:\Windows\System32\<dll_name>
         if target_dll:
@@ -662,5 +665,13 @@ endlocal
         bat_path = out_dir / "build.bat"
         bat_path.write_text(self.generate_build_bat(project_name), encoding="utf-8")
         created.append(bat_path)
+
+        # COFF Import Library (.lib)
+        if self.generate_lib:
+            lib_stem = Path(self.info.dll_name).stem
+            lib_path = out_dir / f"{lib_stem}.lib"
+            lib_gen = ImportLibGenerator(self.info)
+            lib_gen.write_lib(lib_path)
+            created.append(lib_path)
 
         return created
