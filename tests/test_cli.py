@@ -60,6 +60,17 @@ class TestCli(unittest.TestCase):
         self.assertIn("TARGET IMPORT AUDIT", output)
         self.assertIn("COVERED", output)
 
+    def test_cli_diff_mode(self):
+        # Compare version.dll against itself (0 diff)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "--diff", "version.dll", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("EXPORT TABLE DIFF", output)
+        self.assertIn("identical in both binaries", output)
+
     def test_cli_generate_suffix_project(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             out_dir = Path(tmp_dir) / "version_mod_proxy"

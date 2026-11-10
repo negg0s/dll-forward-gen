@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__
+from .diff import diff_export_tables
 from .generator import CodeGenerator, GeneratorMode
 from .models import ExportSymbol, PeExportInfo
 from .pe_parser import PeParser, PeParseError
@@ -287,6 +288,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Check if an executable's imports are satisfied by this DLL",
     )
     parser.add_argument(
+        "--diff",
+        type=str,
+        default=None,
+        help="Compare export table of this DLL against a second DLL",
+    )
+    parser.add_argument(
         "--dump-only",
         action="store_true",
         help="Print export directory details and exit without generating files",
@@ -334,6 +341,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         data = export_info_to_dict(info)
         print(json.dumps(data, indent=2))
         return 0
+
+    if args.diff:
+        try:
+            second_path = resolve_dll_path(args.diff)
+            second_parser = PeParser.from_file(second_path)
+            second_info = second_parser.parse()
+            diff_res = diff_export_tables(info, second_info)
+            print(diff_res.format_report(use_color=use_color))
+            return 0
+        except (FileNotFoundError, PeParseError) as e:
+            c_red = COLOR_RED if use_color else ""
+            c_rst = COLOR_RESET if use_color else ""
+            print(f"{c_red}[ERROR] Diff target: {e}{c_rst}", file=sys.stderr)
+            return 1
 
     if args.check_target:
         print(audit_target_imports(info, args.check_target, use_color=use_color))
