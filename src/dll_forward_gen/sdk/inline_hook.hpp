@@ -13,6 +13,7 @@
 #include <cstring>
 #include <vector>
 #include <memory>
+#include "lde.hpp"
 
 namespace dll_forward_gen::sdk {
 
@@ -53,27 +54,35 @@ public:
         target_addr_ = reinterpret_cast<uint8_t*>(target);
         detour_addr_ = reinterpret_cast<uint8_t*>(detour);
 
+#if defined(_M_X64) || defined(__x86_64__)
+        constexpr bool is64 = true;
+#else
+        constexpr bool is64 = false;
+#endif
+        displaced_size_ = hook::LengthDisassembler::GetDisplacedLength(target_addr_, kPatchSize, is64);
+        if (displaced_size_ < kPatchSize) displaced_size_ = kPatchSize;
+
         // 1. Save original target bytes
-        original_bytes_.resize(kPatchSize);
-        std::memcpy(original_bytes_.data(), target_addr_, kPatchSize);
+        original_bytes_.resize(displaced_size_);
+        std::memcpy(original_bytes_.data(), target_addr_, displaced_size_);
 
         // 2. Allocate executable memory for the trampoline
         trampoline_addr_ = reinterpret_cast<uint8_t*>(
-            VirtualAlloc(nullptr, kPatchSize + kPatchSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+            VirtualAlloc(nullptr, displaced_size_ + kPatchSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
         );
         if (!trampoline_addr_) {
             return false;
         }
 
         // Copy stolen original bytes into trampoline
-        std::memcpy(trampoline_addr_, original_bytes_.data(), kPatchSize);
+        std::memcpy(trampoline_addr_, original_bytes_.data(), displaced_size_);
 
-        // Append jump from trampoline back to target + kPatchSize
-        WriteJump(trampoline_addr_ + kPatchSize, target_addr_ + kPatchSize);
+        // Append jump from trampoline back to target + displaced_size_
+        WriteJump(trampoline_addr_ + displaced_size_, target_addr_ + displaced_size_);
 
         // 3. Patch the target function to jump to the detour
         DWORD old_protect = 0;
-        if (!VirtualProtect(target_addr_, kPatchSize, PAGE_EXECUTE_READWRITE, &old_protect)) {
+        if (!VirtualProtect(target_addr_, displaced_size_, PAGE_EXECUTE_READWRITE, &old_protect)) {
             VirtualFree(trampoline_addr_, 0, MEM_RELEASE);
             trampoline_addr_ = nullptr;
             return false;
@@ -81,9 +90,14 @@ public:
 
         WriteJump(target_addr_, detour_addr_);
 
-        VirtualProtect(target_addr_, kPatchSize, old_protect, &old_protect);
-        FlushInstructionCache(GetCurrentProcess(), target_addr_, kPatchSize);
-        FlushInstructionCache(GetCurrentProcess(), trampoline_addr_, kPatchSize + kPatchSize);
+        // Fill remaining bytes (if any) with NOP (0x90)
+        for (size_t i = kPatchSize; i < displaced_size_; ++i) {
+            target_addr_[i] = 0x90;
+        }
+
+        VirtualProtect(target_addr_, displaced_size_, old_protect, &old_protect);
+        FlushInstructionCache(GetCurrentProcess(), target_addr_, displaced_size_);
+        FlushInstructionCache(GetCurrentProcess(), trampoline_addr_, displaced_size_ + kPatchSize);
 
         if (out_original_trampoline) {
             *out_original_trampoline = trampoline_addr_;
@@ -99,10 +113,10 @@ public:
         }
 
         DWORD old_protect = 0;
-        if (VirtualProtect(target_addr_, kPatchSize, PAGE_EXECUTE_READWRITE, &old_protect)) {
-            std::memcpy(target_addr_, original_bytes_.data(), kPatchSize);
-            VirtualProtect(target_addr_, kPatchSize, old_protect, &old_protect);
-            FlushInstructionCache(GetCurrentProcess(), target_addr_, kPatchSize);
+        if (VirtualProtect(target_addr_, displaced_size_, PAGE_EXECUTE_READWRITE, &old_protect)) {
+            std::memcpy(target_addr_, original_bytes_.data(), displaced_size_);
+            VirtualProtect(target_addr_, displaced_size_, old_protect, &old_protect);
+            FlushInstructionCache(GetCurrentProcess(), target_addr_, displaced_size_);
         }
 
         if (trampoline_addr_) {
@@ -154,9 +168,12 @@ private:
         other.target_addr_ = nullptr;
         other.detour_addr_ = nullptr;
         other.trampoline_addr_ = nullptr;
+        displaced_size_ = other.displaced_size_;
+        other.displaced_size_ = 0;
     }
 
     bool is_installed_ = false;
+    size_t displaced_size_ = 0;
     uint8_t* target_addr_ = nullptr;
     uint8_t* detour_addr_ = nullptr;
     uint8_t* trampoline_addr_ = nullptr;

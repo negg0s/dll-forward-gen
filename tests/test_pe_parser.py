@@ -1,6 +1,6 @@
 import os
 import unittest
-from dll_forward_gen.pe_parser import PeParser, PeParseError, demangle_symbol
+from dll_forward_gen.pe_parser import PeParser, PeParseError, demangle_symbol, calculate_entropy
 from dll_forward_gen.models import PeArch
 
 
@@ -58,6 +58,31 @@ class TestPeParser(unittest.TestCase):
         if demangled is not None:
             self.assertIn("MyFunction", demangled)
         self.assertIsNone(demangle_symbol("PlainCFunction"))
+
+
+    def test_entropy_calculation(self):
+        # All zeros has 0 entropy
+        self.assertEqual(calculate_entropy(b"\x00" * 256), 0.0)
+
+        # Uniform distribution of all 256 bytes has maximum entropy of 8.0
+        uniform = bytes(range(256)) * 4
+        self.assertAlmostEqual(calculate_entropy(uniform), 8.0, places=3)
+
+    def test_parse_sections_and_metrics(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        info = parser.parse()
+
+        self.assertGreater(len(info.sections), 0)
+        sec_names = [s.name for s in info.sections]
+        self.assertIn(".text", sec_names)
+
+        text_sec = next(s for s in info.sections if s.name == ".text")
+        self.assertGreater(text_sec.entropy, 4.0)
+        self.assertLess(text_sec.entropy, 7.5)
 
 
 if __name__ == "__main__":

@@ -72,10 +72,20 @@ def format_table(
         f" {c_bld}TLS Callbacks:{c_rst}   {c_ylw}{len(info.tls_callbacks)}{c_rst}" + (f" ({', '.join(f'0x{cb:08X}' for cb in info.tls_callbacks)})" if info.tls_callbacks else ""),
         f" {c_bld}Ordinal Base:{c_rst}    {info.ordinal_base}",
         f" {c_bld}Total Exports:{c_rst}   {info.total_count} (Named: {len(info.named_exports)}, Ordinal-only: {len(info.ordinal_only_exports)}, Forwarded: {len(info.forwarded_exports)})",
+    ]
+
+    if info.sections:
+        sec_summaries = []
+        for s in info.sections:
+            pack_tag = f" {c_red}[PACKED]{c_rst}" if s.is_packed else ""
+            sec_summaries.append(f"{c_wht}{s.name}{c_rst} ({s.entropy:.2f}H{pack_tag})")
+        lines.append(f" {c_bld}Sections:{c_rst}        {', '.join(sec_summaries)}")
+
+    lines.extend([
         f"{c_cyn}{'-' * 82}{c_rst}",
         f"{c_bld}{'ORDINAL':<9} {'RVA':<12} {'TYPE':<14} {'NAME / TARGET'}{c_rst}",
         f"{c_cyn}{'-' * 82}{c_rst}",
-    ]
+    ])
 
     filtered_symbols = info.symbols
     if ordinal_filter is not None:
@@ -193,12 +203,25 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
         "named_count": len(info.named_exports),
         "ordinal_only_count": len(info.ordinal_only_exports),
         "forwarded_count": len(info.forwarded_exports),
+        "tls_callbacks": [f"0x{cb:08X}" for cb in info.tls_callbacks],
+        "sections": [
+            {
+                "name": sec.name,
+                "virtual_address": f"0x{sec.virtual_address:08X}",
+                "virtual_size": sec.virtual_size,
+                "raw_size": sec.raw_data_size,
+                "entropy": sec.entropy,
+                "is_packed": sec.is_packed,
+            }
+            for sec in info.sections
+        ],
         "symbols": [
             {
                 "ordinal": s.ordinal,
                 "rva": f"0x{s.rva:08X}",
                 "name": s.name,
                 "demangled_name": s.demangled_name,
+                "known_name": s.known_name,
                 "is_ordinal_only": s.is_ordinal_only,
                 "is_forwarded": s.is_forwarded,
                 "forward_name": s.forward_name,

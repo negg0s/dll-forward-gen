@@ -1,13 +1,28 @@
 """Zero-dependency PE (Portable Executable) binary parser for extracting DLL exports, imports, and security mitigations."""
 
 import hashlib
+import math
 import os
 import struct
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from .models import ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExportInfo, PeMitigations
+from .models import ExportSymbol, ImportDescriptor, ImportSymbol, PeArch, PeExportInfo, PeMitigations, SectionInfo
 from .known_ordinals import lookup_known_ordinal
+
+
+def calculate_entropy(data: bytes) -> float:
+    """Calculate Shannon entropy for a given byte buffer (0.0 to 8.0)."""
+    if not data:
+        return 0.0
+    counter = Counter(data)
+    total = len(data)
+    entropy = 0.0
+    for count in counter.values():
+        p = count / total
+        entropy -= p * math.log2(p)
+    return round(entropy, 4)
 
 
 class PeParseError(Exception):
@@ -193,15 +208,33 @@ class PeParser:
 
         sections_offset = opt_hdr_offset + size_of_opt_hdr
         self.sections.clear()
+        self.section_infos: List[SectionInfo] = []
         for i in range(num_sections):
             sec_ptr = sections_offset + (i * 40)
             if sec_ptr + 40 > len(self.data):
                 break
+            raw_name = self.data[sec_ptr : sec_ptr + 8].rstrip(b"\x00")
+            sec_name = raw_name.decode("latin1", errors="replace")
             virt_size = self._read_u32(sec_ptr + 8)
             virt_addr = self._read_u32(sec_ptr + 12)
             raw_size = self._read_u32(sec_ptr + 16)
             raw_ptr = self._read_u32(sec_ptr + 20)
+            chars = self._read_u32(sec_ptr + 36) if sec_ptr + 40 <= len(self.data) else 0
             self.sections.append((virt_addr, virt_size, raw_ptr, raw_size))
+
+            sec_bytes = self.data[raw_ptr : raw_ptr + raw_size]
+            entropy = calculate_entropy(sec_bytes)
+            self.section_infos.append(
+                SectionInfo(
+                    name=sec_name,
+                    virtual_address=virt_addr,
+                    virtual_size=virt_size,
+                    raw_data_offset=raw_ptr,
+                    raw_data_size=raw_size,
+                    characteristics=chars,
+                    entropy=entropy,
+                )
+            )
 
         self._headers_parsed = True
 
@@ -221,6 +254,7 @@ class PeParser:
                 symbols=[],
                 sha256=self.sha256,
                 mitigations=self.mitigations,
+                sections=self.section_infos,
             )
 
         export_file_offset = self.rva_to_offset(self.export_rva)
@@ -324,6 +358,7 @@ class PeParser:
             sha256=self.sha256,
             mitigations=self.mitigations,
             tls_callbacks=tls_callbacks,
+            sections=self.section_infos,
         )
 
     def parse_imports(self, include_delay_load: bool = True) -> List[ImportDescriptor]:

@@ -99,6 +99,23 @@ class ImportDescriptor:
 
 
 @dataclass
+class SectionInfo:
+    """Represents a PE section header and its entropy metrics."""
+    name: str
+    virtual_address: int
+    virtual_size: int
+    raw_data_offset: int
+    raw_data_size: int
+    characteristics: int
+    entropy: float = 0.0
+
+    @property
+    def is_packed(self) -> bool:
+        """Heuristic for packed/encrypted sections (Shannon entropy >= 7.0 and size >= 1KB)."""
+        return self.entropy >= 7.0 and self.raw_data_size >= 1024
+
+
+@dataclass
 class PeExportInfo:
     """Complete summary of a PE binary's export directory."""
     filepath: str
@@ -110,6 +127,7 @@ class PeExportInfo:
     sha256: str = ""
     mitigations: Optional[PeMitigations] = None
     tls_callbacks: List[int] = field(default_factory=list)
+    sections: List[SectionInfo] = field(default_factory=list)
 
     @property
     def named_exports(self) -> List[ExportSymbol]:

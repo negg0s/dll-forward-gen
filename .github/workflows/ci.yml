@@ -51,6 +51,8 @@ jobs:
         test_veh_hook.exe
         cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_stealth.cpp /Fe:test_stealth.exe
         test_stealth.exe
+        cl.exe /nologo /O2 /W4 /std:c++20 /EHsc tests\test_lde.cpp /Fe:test_lde.exe
+        test_lde.exe
 
     - name: End-to-End MASM Compilation Check
       shell: cmd
