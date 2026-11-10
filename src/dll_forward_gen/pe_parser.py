@@ -12,6 +12,7 @@ from .models import (
     AntiAnalysisIndicator,
     AuthenticodeInfo,
     DebugInfo,
+    ExceptionInfo,
     ExportSymbol,
     ImportDescriptor,
     ImportSymbol,
@@ -25,6 +26,7 @@ from .models import (
     SectionInfo,
 )
 from .known_ordinals import lookup_known_ordinal
+from .api_hash import compute_all_hashes
 
 
 RESOURCE_TYPE_NAMES = {
@@ -279,6 +281,7 @@ class PeParser:
             raise PeParseError(f"Unsupported Optional Header magic: 0x{self.opt_magic:04X}")
 
         self.opt_hdr_offset = opt_hdr_offset
+        self.exception_dir_offset = self.export_dir_offset + (3 * 8)
         self.security_dir_offset = self.export_dir_offset + (4 * 8)
         self.tls_dir_offset = self.export_dir_offset + (9 * 8)
         self.delay_dir_offset = self.export_dir_offset + (13 * 8)
@@ -395,6 +398,7 @@ class PeParser:
 
                         demangled = demangle_symbol(name) if name else None
                         known = lookup_known_ordinal(dll_name, ordinal) if name is None else None
+                        hashes = compute_all_hashes(name) if name else None
 
                         symbols.append(
                             ExportSymbol(
@@ -405,6 +409,7 @@ class PeParser:
                                 forward_name=fwd_str,
                                 demangled_name=demangled,
                                 known_name=known,
+                                hashes=hashes,
                             )
                         )
 
@@ -486,6 +491,9 @@ class PeParser:
                 cet_compat=True,
             )
 
+        # Parse Exception Directory (.pdata)
+        exception_info = self._parse_exception_directory()
+
         # Heuristic scan for anti-analysis / anti-debug APIs in imports
         anti_analysis: List[AntiAnalysisIndicator] = []
         try:
@@ -523,6 +531,7 @@ class PeParser:
             rich_header=rich_header,
             relocations=relocations,
             debug_info=debug_info,
+            exception_info=exception_info,
         )
 
     def _read_resource_string(self, base_off: int, str_off: int) -> str:
@@ -932,6 +941,26 @@ class PeParser:
             cet_compat=cet_compat,
         )
 
+    def _parse_exception_directory(self) -> Optional[ExceptionInfo]:
+        """Parse PE Exception Directory (.pdata) for x64 / ARM64 table-based SEH."""
+        if not hasattr(self, "exception_dir_offset") or self.exception_dir_offset + 8 > len(self.data):
+            return None
+
+        exc_rva = self._read_u32(self.exception_dir_offset)
+        exc_size = self._read_u32(self.exception_dir_offset + 4)
+        if exc_rva == 0 or exc_size < 12:
+            return None
+
+        file_off = self.rva_to_offset(exc_rva)
+        if file_off is None:
+            return None
+
+        count = exc_size // 12
+        return ExceptionInfo(
+            is_present=True,
+            function_count=count,
+        )
+
     def preview_export(self, symbol_query: Union[str, int], preview_len: int = 32) -> Dict[str, Any]:
         """Disassemble and extract entrypoint prologue bytes for an exported function."""
         info = self.parse()
@@ -979,6 +1008,8 @@ class PeParser:
             pattern = f"Direct Relative JMP -> RVA 0x{target_rva:08X}"
         elif raw_slice.startswith(b"\x48\x89\x5c\x24"):
             pattern = "x64 Standard Function Prologue (MOV [RSP+disp], RBX)"
+        elif raw_slice.startswith(b"\x4c\x8b\xdc"):
+            pattern = "x64 Hotpatchable Frame Setup (MOV R11, RSP)"
         elif raw_slice.startswith(b"\x40\x53"):
             pattern = "x64 Function Prologue (PUSH RBX)"
         elif raw_slice.startswith(b"\x48\x83\xec"):
@@ -995,6 +1026,23 @@ class PeParser:
         elif raw_slice.startswith(b"\xb8\x01\x00\x00\x00\xc3"):
             pattern = "Return Constant TRUE (MOV EAX, 1; RET)"
 
+        func_size = None
+        if hasattr(self, "exception_dir_offset") and self.exception_dir_offset + 8 <= len(self.data):
+            exc_rva = self._read_u32(self.exception_dir_offset)
+            exc_size = self._read_u32(self.exception_dir_offset + 4)
+            if exc_rva and exc_size >= 12:
+                exc_off = self.rva_to_offset(exc_rva)
+                if exc_off:
+                    num_entries = exc_size // 12
+                    for i in range(num_entries):
+                        entry_off = exc_off + (i * 12)
+                        if entry_off + 12 > len(self.data):
+                            break
+                        b_rva, e_rva, _ = struct.unpack("<III", self.data[entry_off : entry_off + 12])
+                        if b_rva <= target_sym.rva < e_rva:
+                            func_size = e_rva - b_rva
+                            break
+
         return {
             "symbol": target_sym,
             "is_forwarded": False,
@@ -1003,4 +1051,5 @@ class PeParser:
             "file_offset": f"0x{file_off:08X}",
             "raw_bytes": hex_bytes,
             "pattern": pattern,
+            "function_size": func_size,
         }

@@ -129,6 +129,19 @@ class TestCli(unittest.TestCase):
         self.assertIn('"mitigations":', output)
         self.assertIn('"sections":', output)
         self.assertIn('"entropy":', output)
+        self.assertIn('"hashes":', output)
+
+    def test_cli_api_hash(self):
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exit_code = main(["version.dll", "--api-hash", "--no-color"])
+
+        self.assertEqual(exit_code, 0)
+        output = f.getvalue()
+        self.assertIn("ROR13:", output)
+        self.assertIn("DJB2:", output)
+        self.assertIn("FNV1A:", output)
+        self.assertIn("CRC32:", output)
 
 
     def test_cli_export_sdk(self):
@@ -139,7 +152,7 @@ class TestCli(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             exported_files = list(Path(tmp_dir).glob("*.hpp"))
-            self.assertGreaterEqual(len(exported_files), 10)
+            self.assertGreaterEqual(len(exported_files), 11)
             file_names = {p.name for p in exported_files}
             self.assertIn("inline_hook.hpp", file_names)
             self.assertIn("pattern_scan.hpp", file_names)
@@ -151,6 +164,7 @@ class TestCli(unittest.TestCase):
             self.assertIn("pe_loader.hpp", file_names)
             self.assertIn("iat_resolver.hpp", file_names)
             self.assertIn("reloc.hpp", file_names)
+            self.assertIn("api_hash.hpp", file_names)
 
 
     def test_cli_generate_lib(self):

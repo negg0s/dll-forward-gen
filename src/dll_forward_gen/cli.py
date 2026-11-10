@@ -44,6 +44,7 @@ def format_table(
     filter_query: Optional[str] = None,
     ordinal_filter: Optional[int] = None,
     use_color: bool = True,
+    show_hashes: bool = False,
 ) -> str:
     """Format export table into a clean ASCII/ANSI view with filtering."""
     c_rst = COLOR_RESET if use_color else ""
@@ -98,6 +99,9 @@ def format_table(
     if info.relocations and info.relocations.is_present:
         dist_str = ", ".join(f"{k}: {v}" for k, v in info.relocations.type_distribution.items())
         lines.append(f" {c_bld}Relocations:{c_rst}    {info.relocations.total_relocs:,} entries in {info.relocations.blocks_count} blocks ({c_dim}{dist_str}{c_rst})")
+
+    if info.exception_info and info.exception_info.is_present:
+        lines.append(f" {c_bld}Exceptions:{c_rst}     {info.exception_info.function_count:,} runtime function entries in .pdata (Table SEH)")
 
     if info.debug_info and info.debug_info.has_debug_info:
         dbg_parts = []
@@ -164,6 +168,10 @@ def format_table(
 
         if sym.demangled_name:
             target_str += f"\n          {c_dim}↳ {sym.demangled_name}{c_rst}"
+
+        if show_hashes and sym.hashes:
+            hash_parts = " | ".join(f"{k.upper()}: {v}" for k, v in sym.hashes.items())
+            target_str += f"\n          {c_mag}# [{hash_parts}]{c_rst}"
 
         lines.append(f"{ord_str:<9} {c_dim}{rva_str:<12}{c_rst} {type_str:<23} {target_str}")
 
@@ -325,6 +333,10 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
             "is_reproducible": info.debug_info.is_reproducible,
             "cet_compat": info.debug_info.cet_compat,
         } if info.debug_info and info.debug_info.has_debug_info else None,
+        "exception_info": {
+            "is_present": info.exception_info.is_present,
+            "function_count": info.exception_info.function_count,
+        } if info.exception_info and info.exception_info.is_present else None,
         "symbols": [
             {
                 "ordinal": s.ordinal,
@@ -335,6 +347,7 @@ def export_info_to_dict(info: PeExportInfo) -> dict:
                 "is_ordinal_only": s.is_ordinal_only,
                 "is_forwarded": s.is_forwarded,
                 "forward_name": s.forward_name,
+                "hashes": s.hashes,
             }
             for s in info.symbols
         ],
@@ -486,6 +499,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Output parsed exports as structured JSON to stdout",
     )
     parser.add_argument(
+        "--api-hash",
+        action="store_true",
+        help="Display ROR13, DJB2, FNV-1a, and CRC32 API hashes for exported symbols in table output",
+    )
+    parser.add_argument(
         "--no-logging",
         action="store_true",
         help="Disable OutputDebugString logging in generated proxy code",
@@ -593,6 +611,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"    Virtual Address: {preview['virtual_address']}")
             if not preview["is_forwarded"]:
                 print(f"    File Offset:     {preview['file_offset']}")
+                if preview.get("function_size"):
+                    print(f"    Function Size:   {preview['function_size']} bytes (from .pdata)")
                 print(f"    Raw Bytes:       {c_dim}{preview['raw_bytes']}{c_rst}")
             print(f"    Pattern:         {c_grn}{preview['pattern']}{c_rst}\n")
             if not args.output_dir and not args.dump_only:
@@ -621,15 +641,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not args.output_dir and not args.dump_only:
                 return 1
 
-    if args.dump_only or filter_query or args.ordinal is not None:
+    if args.dump_only or filter_query or args.ordinal is not None or args.api_hash:
         table_output = format_table(
             info,
             filter_query=filter_query,
             ordinal_filter=args.ordinal,
             use_color=use_color,
+            show_hashes=args.api_hash,
         )
         print(table_output)
-        if args.dump_only:
+        if args.dump_only or (args.api_hash and not args.output_dir):
             return 0
 
     out_dir = args.output_dir

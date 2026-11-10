@@ -196,6 +196,34 @@ class TestPeParser(unittest.TestCase):
             self.assertIn("msdl.microsoft.com", info.debug_info.symbol_server_url)
             self.assertTrue(info.debug_info.cet_compat)
 
+    def test_parse_exception_directory(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        info = parser.parse()
+
+        self.assertIsNotNone(info.exception_info)
+        self.assertTrue(info.exception_info.is_present)
+        self.assertGreater(info.exception_info.function_count, 0)
+
+    def test_preview_export_function_size(self):
+        system_version = r"C:\Windows\System32\version.dll"
+        if not os.path.exists(system_version):
+            self.skipTest("version.dll not available in System32")
+
+        parser = PeParser.from_file(system_version)
+        preview = parser.preview_export("VerFindFileW")
+
+        self.assertFalse(preview["is_forwarded"])
+        self.assertEqual(preview["symbol"].name, "VerFindFileW")
+        self.assertIsNotNone(preview.get("function_size"))
+        self.assertGreater(preview["function_size"], 0)
+        self.assertIn("4C 8B DC", preview["raw_bytes"])
+        self.assertIn("MOV R11, RSP", preview["pattern"])
+
+
 
 
 if __name__ == "__main__":

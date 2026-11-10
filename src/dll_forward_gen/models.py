@@ -89,6 +89,7 @@ class ExportSymbol:
     forward_name: Optional[str] = None
     demangled_name: Optional[str] = None
     known_name: Optional[str] = None
+    hashes: Optional[Dict[str, str]] = field(default=None, hash=False, compare=False)
 
     @property
     def is_ordinal_only(self) -> bool:
@@ -205,6 +206,13 @@ class DebugInfo:
 
 
 @dataclass
+class ExceptionInfo:
+    """Information extracted from PE Exception Directory (.pdata / RUNTIME_FUNCTION)."""
+    is_present: bool
+    function_count: int = 0
+
+
+@dataclass
 class PeExportInfo:
     """Complete summary of a PE binary's export directory."""
     filepath: str
@@ -224,6 +232,7 @@ class PeExportInfo:
     rich_header: Optional[RichHeaderInfo] = None
     relocations: Optional[RelocInfo] = None
     debug_info: Optional[DebugInfo] = None
+    exception_info: Optional[ExceptionInfo] = None
 
     @property
     def named_exports(self) -> List[ExportSymbol]:

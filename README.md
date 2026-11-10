@@ -101,20 +101,36 @@ python -m dll_forward_gen game_v1.dll --diff game_v2.dll
 Inspect a function's prologue bytes, detect indirect jump trampolines, and preview stack allocation:
 
 ```bash
-python -m dll_forward_gen version.dll --disasm GetFileVersionInfoA
+python -m dll_forward_gen version.dll --disasm VerFindFileW
 ```
 
 Output:
 ```
-[+] Entrypoint Disassembly Preview: GetFileVersionInfoA (@1)
-    RVA:             0x000010F0
-    Virtual Address: 0x00000001800010F0
-    File Offset:     0x000010F0
-    Raw Bytes:       48 FF 25 D9 42 00 00 CC CC CC CC CC CC CC CC CC ...
-    Pattern:         x64 Indirect JMP Trampoline -> [RIP + 0x42D9] (VA 0x00000001800053D0)
+[+] Entrypoint Disassembly Preview: VerFindFileW (@11)
+    RVA:             0x00002160
+    Virtual Address: 0x0000000180002160
+    File Offset:     0x00002160
+    Function Size:   67 bytes (from .pdata)
+    Raw Bytes:       4C 8B DC 48 83 EC 48 48 8B 84 24 88 00 00 00 49 89 43 F0 ...
+    Pattern:         x64 Hotpatchable Frame Setup (MOV R11, RSP)
 ```
 
-### 5. Selective Detour Hooking (`--hook`)
+### 5. Export API Hashing (`--api-hash`)
+Compute ROR13, DJB2, FNV-1a, and CRC32 hashes for evasion analysis, manual loading, and shellcode lookup:
+
+```bash
+python -m dll_forward_gen version.dll --api-hash
+```
+
+Output:
+```
+ORDINAL   RVA          TYPE           NAME / TARGET
+----------------------------------------------------------------------------------
+@1        0x000010F0   [FUNCTION]              GetFileVersionInfoA
+          # [ROR13: 0x9D1DF4B3 | DJB2: 0xD574F958 | FNV1A: 0x42D7EAD2 | CRC32: 0x5DE9D9BD]
+```
+
+### 6. Selective Detour Hooking (`--hook`)
 Forward 99% of functions with zero-overhead MASM, but intercept specific functions with custom C++ logic:
 
 ```bash
@@ -280,6 +296,21 @@ dll_forward_gen::loader::RelocProcessor::ApplyRelocations(pMappedImageBase, delt
 size_t relocCount = dll_forward_gen::loader::RelocProcessor::CountRelocations(pMappedImageBase);
 ```
 
+### Compile-Time API Hashing & Resolver (`sdk/api_hash.hpp`)
+```cpp
+#include "sdk/api_hash.hpp"
+
+// Compile-time constexpr hashing leaves ZERO plaintext strings in your binary:
+constexpr uint32_t targetHash = dll_forward_gen::crypto::ApiHash::ROR13("CreateFileW");
+
+// Dynamically resolve export by hash directly from PE EAT (bypasses API hooks and GetProcAddress):
+FARPROC pfnCreateFile = dll_forward_gen::crypto::ApiHash::GetProcAddressByHash(
+    GetModuleHandleW(L"kernel32.dll"),
+    targetHash,
+    dll_forward_gen::crypto::HashAlgorithm::ROR13
+);
+```
+
 ### Length Disassembler Engine (`sdk/lde.hpp`)
 ```cpp
 #include "sdk/lde.hpp"
@@ -352,7 +383,7 @@ Run the comprehensive test suite with Python's built-in `unittest`:
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v
 ```
 
-All 62 unit tests execute in ~0.50 seconds with zero external dependencies.
+All 67 unit tests execute in ~0.50 seconds with zero external dependencies.
 
 ---
 
