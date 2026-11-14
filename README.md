@@ -402,7 +402,7 @@ dll-forward-gen.exe C:\Windows\System32\version.dll -m masm -o ./version_proxy
 
 ## 🧪 Automated Testing
 
-Run the comprehensive test suite with Python's built-in `unittest`:
+Run the test suite with Python's built-in `unittest`:
 
 ```bash
 $env:PYTHONPATH="src;."; python -m unittest discover -s tests -v

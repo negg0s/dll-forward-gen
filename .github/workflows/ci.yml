@@ -20,6 +20,10 @@ jobs:
       with:
         python-version: "3.12"
 
+    - name: Verify Repository Constraints
+      shell: cmd
+      run: python tools/check_constraints.py
+
     - name: Install Package in Editable Mode
       shell: cmd
       run: pip install -e .
@@ -77,3 +81,9 @@ jobs:
         cd e2e_proxy
         ml64.exe /c /nologo /Fostubs.obj stubs.asm
         cl.exe /nologo /O2 /W4 /LD dllmain.cpp stubs.obj /DEF:exports.def /Fe:version.dll /link /MACHINE:X64
+
+    - name: Build Distribution Packages (sdist and wheel)
+      shell: cmd
+      run: |
+        pip install --upgrade build
+        python -m build
