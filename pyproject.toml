@@ -40,3 +40,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 dll_forward_gen = ["sdk/*.hpp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
