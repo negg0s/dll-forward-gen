@@ -1,0 +1,54 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: CodeQL Analysis (${{ matrix.language }})
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build_command: true
+          - language: python
+            build_command: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Set up MSVC environment
+        if: matrix.build_command
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build C++ Native Engine
+        if: matrix.build_command
+        shell: cmd
+        run: |
+          cd cpp
+          cl.exe /nologo /O2 /W4 /std:c++20 /EHsc dll_forward_gen.cpp /Fe:dll-forward-gen.exe
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
