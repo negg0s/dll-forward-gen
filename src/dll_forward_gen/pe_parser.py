@@ -250,7 +250,7 @@ class PeParser:
             raise PeParseError(f"Invalid DOS signature 0x{dos_magic:04X} (expected 'MZ' 0x5A4D)")
 
         self.pe_offset = self._read_u32(0x3C)
-        if self.pe_offset + 4 > len(self.data):
+        if self.pe_offset < 0x40 or self.pe_offset + 24 > len(self.data):
             raise PeParseError(f"Invalid e_lfanew pointer 0x{self.pe_offset:X}")
 
         nt_sig = self._read_u32(self.pe_offset)

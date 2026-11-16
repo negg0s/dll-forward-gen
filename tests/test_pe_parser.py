@@ -223,7 +223,12 @@ class TestPeParser(unittest.TestCase):
         self.assertIn("4C 8B DC", preview["raw_bytes"])
         self.assertIn("MOV R11, RSP", preview["pattern"])
 
-
+    def test_overlapping_or_invalid_e_lfanew_raises_error(self):
+        data = bytearray(128)
+        data[0:2] = b"MZ"
+        data[0x3C:0x40] = (0x20).to_bytes(4, "little")
+        with self.assertRaises(PeParseError):
+            PeParser.parse_bytes(bytes(data))
 
 
 if __name__ == "__main__":
