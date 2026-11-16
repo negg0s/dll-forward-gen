@@ -230,6 +230,37 @@ class TestPeParser(unittest.TestCase):
         with self.assertRaises(PeParseError):
             PeParser.parse_bytes(bytes(data))
 
+    def test_out_of_bounds_rva_and_null_pointers(self):
+        parser = PeParser(b"\x00" * 1024)
+        parser.sections = [
+            (0x1000, 0x1000, 0x400, 0x1000),
+        ]
+        # Null and negative RVAs
+        self.assertIsNone(parser.rva_to_offset(0))
+        self.assertIsNone(parser.rva_to_offset(-1))
+        self.assertIsNone(parser.rva_to_offset(None))
+
+        # Out-of-bounds file offset (raw_ptr + offset >= len(data))
+        # 0x400 (1024) + 0x100 = 0x500 (1280), which exceeds len(data) == 1024
+        self.assertIsNone(parser.rva_to_offset(0x1100))
+
+    def test_read_asciiz_bounds_and_long_name(self):
+        # Long string test
+        long_data = b"A" * 5000 + b"\x00"
+        parser = PeParser(long_data)
+        res = parser._read_asciiz(0, max_len=4096)
+        self.assertEqual(len(res), 4096)
+
+        # Negative offset or past EOF
+        self.assertEqual(parser._read_asciiz(-5), "")
+        self.assertEqual(parser._read_asciiz(999999), "")
+
+    def test_demangle_symbol_long_name(self):
+        long_mangled = "?" + "A" * 5000
+        demangled = demangle_symbol(long_mangled)
+        # Should not crash or overflow
+        self.assertTrue(demangled is None or isinstance(demangled, str))
+
 
 if __name__ == "__main__":
     unittest.main()

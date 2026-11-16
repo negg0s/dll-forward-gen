@@ -157,10 +157,12 @@ def demangle_symbol(name: Optional[str]) -> Optional[str]:
     """Demangle MSVC decorated C++ symbols using dbghelp.dll (Windows native)."""
     if not name or not name.startswith("?"):
         return None
+    if len(name) > 4096:
+        name = name[:4096]
     try:
         import ctypes
-        buf = ctypes.create_unicode_buffer(2048)
-        res = ctypes.windll.dbghelp.UnDecorateSymbolNameW(name, buf, 2048, 0)
+        buf = ctypes.create_unicode_buffer(4096)
+        res = ctypes.windll.dbghelp.UnDecorateSymbolNameW(name, buf, 4096, 0)
         if res > 0:
             return buf.value
     except Exception:
@@ -220,21 +222,36 @@ class PeParser:
     def _read_u64(self, offset: int) -> int:
         return struct.unpack("<Q", self._read_exact(offset, 8))[0]
 
-    def _read_asciiz(self, offset: int, max_len: int = 1024) -> str:
-        end = self.data.find(b"\x00", offset, offset + max_len)
+    def _read_asciiz(self, offset: int, max_len: int = 4096) -> str:
+        if offset < 0 or offset >= len(self.data) or max_len <= 0:
+            return ""
+        max_end = min(offset + max_len, len(self.data))
+        end = self.data.find(b"\x00", offset, max_end)
         if end == -1:
-            end = min(offset + max_len, len(self.data))
+            end = max_end
         raw = self.data[offset:end]
         return raw.decode("latin1", errors="replace")
 
     def rva_to_offset(self, rva: int) -> Optional[int]:
         """Convert a Relative Virtual Address (RVA) to physical raw file offset."""
+        if rva is None or not isinstance(rva, int) or rva <= 0:
+            return None
         for va_start, virt_size, raw_ptr, raw_size in self.sections:
+            if not (isinstance(va_start, int) and isinstance(virt_size, int) and
+                    isinstance(raw_ptr, int) and isinstance(raw_size, int)):
+                continue
+            if va_start < 0 or raw_ptr < 0 or raw_size < 0:
+                continue
             span = max(virt_size, raw_size)
+            if span <= 0:
+                continue
             if va_start <= rva < va_start + span:
                 offset_in_sec = rva - va_start
                 if offset_in_sec < raw_size:
-                    return raw_ptr + offset_in_sec
+                    file_offset = raw_ptr + offset_in_sec
+                    if self.data and file_offset >= len(self.data):
+                        return None
+                    return file_offset
         return None
 
     def _parse_headers(self) -> None:
@@ -351,7 +368,7 @@ class PeParser:
 
         if self.export_rva != 0 and self.export_size != 0:
             export_file_offset = self.rva_to_offset(self.export_rva)
-            if export_file_offset is not None:
+            if export_file_offset is not None and export_file_offset + 40 <= len(self.data):
                 name_rva = self._read_u32(export_file_offset + 12)
                 ordinal_base = self._read_u32(export_file_offset + 16)
                 num_functions = self._read_u32(export_file_offset + 20)
@@ -360,28 +377,43 @@ class PeParser:
                 addr_names_rva = self._read_u32(export_file_offset + 32)
                 addr_ordinals_rva = self._read_u32(export_file_offset + 36)
 
-                name_offset = self.rva_to_offset(name_rva)
-                if name_offset is not None:
-                    parsed_name = self._read_asciiz(name_offset)
-                    if parsed_name:
-                        dll_name = parsed_name
+                if name_rva != 0:
+                    name_offset = self.rva_to_offset(name_rva)
+                    if name_offset is not None:
+                        parsed_name = self._read_asciiz(name_offset)
+                        if parsed_name:
+                            dll_name = parsed_name
 
                 index_to_name: Dict[int, str] = {}
-                names_offset = self.rva_to_offset(addr_names_rva)
-                ordinals_offset = self.rva_to_offset(addr_ordinals_rva)
+                names_offset = self.rva_to_offset(addr_names_rva) if addr_names_rva else None
+                ordinals_offset = self.rva_to_offset(addr_ordinals_rva) if addr_ordinals_rva else None
 
                 if names_offset is not None and ordinals_offset is not None:
-                    for i in range(num_names):
+                    max_names = min(
+                        num_names,
+                        max(0, (len(self.data) - names_offset) // 4),
+                        max(0, (len(self.data) - ordinals_offset) // 2),
+                        65536,
+                    )
+                    for i in range(max_names):
                         n_rva = self._read_u32(names_offset + (i * 4))
                         fn_idx = self._read_u16(ordinals_offset + (i * 2))
+                        if n_rva == 0:
+                            continue
                         fn_name_offset = self.rva_to_offset(n_rva)
                         if fn_name_offset is not None:
                             sym_name = self._read_asciiz(fn_name_offset)
-                            index_to_name[fn_idx] = sym_name
+                            if sym_name:
+                                index_to_name[fn_idx] = sym_name
 
-                functions_offset = self.rva_to_offset(addr_functions_rva)
+                functions_offset = self.rva_to_offset(addr_functions_rva) if addr_functions_rva else None
                 if functions_offset is not None:
-                    for idx in range(num_functions):
+                    max_functions = min(
+                        num_functions,
+                        max(0, (len(self.data) - functions_offset) // 4),
+                        65536,
+                    )
+                    for idx in range(max_functions):
                         fn_rva = self._read_u32(functions_offset + (idx * 4))
                         if fn_rva == 0:
                             continue
@@ -395,6 +427,11 @@ class PeParser:
                             fwd_offset = self.rva_to_offset(fn_rva)
                             if fwd_offset is not None:
                                 fwd_str = self._read_asciiz(fwd_offset)
+                                if not fwd_str:
+                                    is_fwd = False
+                                    fwd_str = None
+                            else:
+                                is_fwd = False
 
                         demangled = demangle_symbol(name) if name else None
                         known = lookup_known_ordinal(dll_name, ordinal) if name is None else None
